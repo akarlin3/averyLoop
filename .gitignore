@@ -1,0 +1,25 @@
+# Chromadb local storage
+.chromadb/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Improvement loop logs
+improvement_loop_log.json
+
+# Environment / secrets
+.env
+
+# Actual project configs are per-project, not committed
+/project_config.yaml
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/

@@ -1,0 +1,52 @@
+# project_config.example.yaml
+# Copy this file to project_config.yaml and customise for your project.
+# The improvement loop searches for config in this order:
+#   1. Explicit path passed to load_project_config()
+#   2. PROJECT_CONFIG environment variable
+#   3. ./project_config.yaml
+#   4. ./improvement_loop_project.yaml
+
+# --- Project metadata ---
+name: "my-project"                     # Short project name
+description: "A brief description"     # One-liner shown in audit context
+
+# --- Languages & branches ---
+languages: ["python"]                  # Languages present in the codebase
+default_branch: "main"                 # Branch to diff against / merge into
+branch_prefix: "improvement/"          # Prefix for improvement branches
+
+# --- Directory layout ---
+source_dirs: ["src/"]                  # Directories containing source code to audit
+test_command: "python -m pytest tests/ -q --tb=short"  # Command to run the test suite
+test_ignores: []                       # Pytest node-ids or patterns to skip
+read_only_dirs: []                     # Dirs the loop may read but must not modify
+skip_dirs: [".git", "__pycache__"]     # Dirs to skip when indexing / scanning
+key_files: []                          # Important files the auditor should always review
+
+# --- Prompts (multi-line YAML strings recommended) ---
+prompts:
+  audit_system: |
+    You are a senior code auditor. Review the code for correctness,
+    security, performance, and maintainability issues. Return structured
+    JSON findings.
+  review_system: |
+    You are a code reviewer. Evaluate the proposed patch for correctness,
+    test coverage, and adherence to project conventions.
+  judge_system: |
+    You are an impartial judge evaluating code improvement proposals.
+    Score each proposal on impact, correctness, and risk.
+  judge_calibration: |
+    Calibration guidance for scoring:
+    - 9-10: Critical fix, high confidence, low risk
+    - 7-8: Significant improvement, good confidence
+    - 5-6: Minor improvement or moderate risk
+    - 1-4: Low value or high risk, should likely be skipped
+
+# --- Risk / safety ---
+risk_flags: ["LEAKAGE_RISK", "PHI_RISK"]       # Flags that the auditor may raise
+critical_flags: ["LEAKAGE_RISK", "PHI_RISK"]    # Flags that block automatic merge
+forbidden_patterns: []                           # Regex patterns that must never appear in patches
+
+# --- Vector index ---
+collection_name: "codebase_index"               # ChromaDB collection name
+skip_extensions: [".png", ".jpg", ".pdf"]        # File extensions to skip when indexing

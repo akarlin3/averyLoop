@@ -1,0 +1,103 @@
+# project_config.yaml — pancData3 configuration
+# Place this file in your pancData3 repo root (or point PROJECT_CONFIG at it).
+
+name: "pancData3"
+description: >
+  Pancreatic cancer clinical-genomic analysis pipeline — ETL, feature
+  engineering, survival modelling, and reporting.
+
+languages: ["python"]
+default_branch: "main"
+branch_prefix: "improvement/"
+
+source_dirs:
+  - "analysis/"
+  - "utils/"
+  - "pipelines/"
+
+test_command: "python -m pytest analysis/tests/ -q --tb=short"
+test_ignores: []
+
+read_only_dirs:
+  - "data/"
+  - "configs/"
+
+skip_dirs:
+  - ".git"
+  - "__pycache__"
+  - ".chromadb"
+  - "data"
+
+key_files:
+  - "analysis/pancData_analysis.py"
+  - "analysis/feature_engineering.py"
+  - "utils/helpers.py"
+
+prompts:
+  audit_system: |
+    You are a senior data-science code auditor specialising in clinical and
+    genomic analysis pipelines. You focus on:
+    - Data leakage between train/test splits
+    - PHI (Protected Health Information) exposure
+    - Statistical correctness (survival analysis, feature engineering)
+    - Reproducibility (random seeds, deterministic operations)
+    - Code quality and maintainability
+
+    When you find an issue, return a structured JSON object with fields:
+    file, line_start, line_end, severity (critical/high/medium/low),
+    category, description, suggested_fix, and any risk flags.
+
+  review_system: |
+    You are a code reviewer for a clinical data-science project. Evaluate
+    proposed patches for:
+    - Correctness of statistical and data operations
+    - No introduction of data leakage or PHI exposure
+    - Adequate test coverage for the change
+    - Adherence to existing project conventions (pandas style, naming, etc.)
+    - No regressions in existing functionality
+
+  judge_system: |
+    You are an impartial judge evaluating code improvement proposals for a
+    clinical genomics analysis codebase. Score each proposal on:
+    - Impact: How significant is the improvement?
+    - Correctness: Is the fix/improvement correct?
+    - Risk: Could this change introduce regressions or data issues?
+    - Test coverage: Are the changes adequately tested?
+
+    Return a numeric score 1-10 and a brief justification.
+
+  judge_calibration: |
+    Scoring calibration for pancData3:
+    - 9-10: Fixes data leakage, PHI exposure, or critical statistical bugs.
+            High confidence, well tested, low regression risk.
+    - 7-8:  Significant correctness or performance improvement. Good test
+            coverage. Moderate confidence.
+    - 5-6:  Minor improvement (style, small refactor) or moderate risk of
+            unintended side effects. Some test coverage.
+    - 3-4:  Low-value change or notable risk. May lack tests.
+    - 1-2:  Cosmetic only, or high risk of regression. Skip.
+
+risk_flags:
+  - "LEAKAGE_RISK"
+  - "PHI_RISK"
+  - "STATISTICAL_ERROR"
+
+critical_flags:
+  - "LEAKAGE_RISK"
+  - "PHI_RISK"
+
+forbidden_patterns:
+  - "patient_id"
+  - "mrn"
+  - "ssn"
+  - '\bprint\s*\(.*(password|secret|key)'
+
+collection_name: "pancdata3_index"
+
+skip_extensions:
+  - ".png"
+  - ".jpg"
+  - ".pdf"
+  - ".csv"
+  - ".tsv"
+  - ".parquet"

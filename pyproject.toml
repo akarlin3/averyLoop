@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "code-improvement-loop"
+version = "1.0.0"
+description = "Autonomous code auditing and improvement framework powered by LLMs"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=0.40.0",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "chromadb>=0.5.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[project.scripts]
+improvement-loop = "improvement_loop.orchestrator_v2:main"
+
+[tool.setuptools.packages.find]
+include = ["improvement_loop*"]
