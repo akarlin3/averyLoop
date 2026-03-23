@@ -9,7 +9,7 @@ from typing import List, Optional  # noqa: F401 — used by callers via import
 
 from improvement_loop.evaluator import Finding, score_audit, should_continue_loop
 
-LOG_FILE = os.path.join(os.path.dirname(__file__), os.pardir, "improvement_loop_log.json")
+LOG_FILE = os.path.join(os.getcwd(), "improvement_loop_log.json")
 
 
 # ── I/O helpers ──────────────────────────────────────────────────────────────

@@ -36,9 +36,7 @@ def apply_fix(finding, repo_root: str | None = None) -> None:
         directory.
     """
     if repo_root is None:
-        repo_root = os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        )
+        repo_root = os.getcwd()
 
     file_path = os.path.join(repo_root, finding.file)
     if not os.path.exists(file_path):

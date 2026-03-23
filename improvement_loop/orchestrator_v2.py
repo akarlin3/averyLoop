@@ -30,8 +30,10 @@ from improvement_loop.agents.reviewer import review as _review
 from improvement_loop.loop_config import get_config as _get_loop_config
 from improvement_loop.project_config import get_project_config
 
-# Repo root is one level up from this file's directory
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Repo root is the current working directory (the target project).
+# This was previously __file__-relative, which broke when the package
+# was installed via pip into site-packages.
+REPO_ROOT = os.getcwd()
 
 
 # ---------------------------------------------------------------------------

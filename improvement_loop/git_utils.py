@@ -13,8 +13,9 @@ from typing import List
 
 from improvement_loop.project_config import get_project_config
 
-# Repository root — one level up from this file's directory
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+# Repository root — the current working directory (the target project).
+# Previously __file__-relative, which broke when installed as a pip package.
+REPO_ROOT = pathlib.Path.cwd()
 
 logger = logging.getLogger(__name__)
 

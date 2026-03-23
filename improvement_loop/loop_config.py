@@ -10,8 +10,7 @@ import os
 from dataclasses import dataclass, fields
 from typing import Literal
 
-_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CONFIG_PATH = os.path.join(_REPO_ROOT, "improvement_loop_config.json")
+CONFIG_PATH = os.path.join(os.getcwd(), "improvement_loop_config.json")
 
 
 @dataclass
