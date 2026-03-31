@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-03-30
+
+### Added
+
+- **Shared API helper** (`agents/_api.py`): Centralized `get_client()` constructor with rate-limit retry and streaming support. API key is now resolved exclusively from project config (`project_config.yaml` or `improvement_loop_config.json`), removing the env var fallback.
+
+- **Implementer agent** (`agents/implementer.py`): New module that applies code fixes from audit findings, replacing inline fix logic in the orchestrator.
+
+- **RAG retriever** (`agents/retriever.py`): New module for querying the ChromaDB vector index to supply relevant code context to agents.
+
+- **Orchestrator tests** (`tests/test_orchestrator.py`): New test coverage for the restructured orchestrator pipeline.
+
+### Changed
+
+- **Orchestrator v2** restructured into a four-phase pipeline (audit → implement → review → merge) with a reviewer gate that blocks low-quality patches before merge.
+
+- **Reviewer agent** (`agents/reviewer.py`): Expanded with richer review logic to support the new reviewer gate phase.
+
+- **Evaluator** (`evaluator.py`): Fixed post-merge test revert behavior, added rebase-before-merge, and aligned score thresholds consistently.
+
+- **Git utilities** (`git_utils.py`): Switched `REPO_ROOT` to `os.getcwd()` instead of `__file__`-relative paths for correct behavior when installed as a package.
+
+- **API key resolution**: `get_client()` no longer falls back to the `ANTHROPIC_API_KEY` environment variable; the key must be set in project or loop config.
+
 ## [1.0.0] - 2026-03-22
 
 Initial stable release — extracted from [akarlin3/pancData3](https://github.com/akarlin3/pancData3) as an independent, reusable package.
