@@ -17,7 +17,7 @@ An autonomous code audit → implement → review → merge pipeline powered by 
 From source (editable):
 
 ```bash
-git clone https://github.com/akarlin3/averyloop.git
+git clone https://github.com/akarlin3/averyLoop.git
 cd averyloop
 pip install -e ".[test]"
 ```
