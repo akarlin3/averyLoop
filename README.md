@@ -1,5 +1,7 @@
 # AveryLoop
 
+[![tests](https://github.com/akarlin3/averyLoop/actions/workflows/test.yml/badge.svg)](https://github.com/akarlin3/averyLoop/actions/workflows/test.yml)
+
 An autonomous code audit → implement → review → merge pipeline powered by Claude. Uses specialized LLM agents (auditor, implementer, reviewer) with RAG-based codebase retrieval to continuously improve any code repository.
 
 ## Features
@@ -11,6 +13,38 @@ An autonomous code audit → implement → review → merge pipeline powered by 
 - **Safety flags** for domain-specific risks (e.g. `LEAKAGE_RISK`, `PHI_RISK`) — configurable per project with critical flags that block automatic merge
 - **Git branch isolation** per fix with post-merge test validation — each improvement gets its own branch, tests run before and after merge
 - **Full iteration logging** with score drift detection, finding deduplication, and structured JSON history
+
+## How it works
+
+Each iteration runs five phases. RAG retrieval feeds the audit; every finding is
+implemented on its own branch and must clear a reviewer gate and a pre/post-merge
+test gate before it lands. The loop repeats until findings stall or diminishing
+returns are detected.
+
+```mermaid
+flowchart TD
+    RAG[RAG retrieval<br/>ChromaDB code search] --> Audit[1. Audit<br/>Auditor agent → JSON findings]
+    Audit --> Implement[2. Implement<br/>each finding on its own branch]
+    Implement --> Review{3. Review gate<br/>Reviewer agent}
+
+    Safety[Safety flags<br/>PHI_RISK / LEAKAGE_RISK] -. forces REJECT .-> Review
+
+    Review -->|REQUEST_CHANGES| Skip[Leave branch for<br/>manual follow-up]
+    Review -->|REJECT| Delete[Delete branch]
+    Review -->|APPROVE| Test{4. Test &amp; merge<br/>pre/post-merge test gate}
+
+    Test -->|tests fail| Hold[Keep as implemented<br/>no merge]
+    Test -->|tests pass| Merge[Merge into target branch]
+
+    Merge --> Log[5. Log &amp; evaluate<br/>score audit, write JSON history]
+    Skip --> Log
+    Delete --> Log
+    Hold --> Log
+
+    Log --> Exit{Diminishing returns or<br/>no findings above threshold?}
+    Exit -->|no| Audit
+    Exit -->|yes| Stop([Stop — converged])
+```
 
 ## Installation
 
@@ -54,6 +88,85 @@ averyloop
 # 6. Dry run (no API calls, no code changes — validates setup)
 averyloop --dry-run
 ```
+
+## Example run
+
+The fastest way to confirm your setup works — without an API key — is `--dry-run`,
+which exercises the full phase scaffolding while skipping every Anthropic call and
+code change.
+
+Captured from `averyloop --dry-run` (run in an empty git repo):
+
+```text
+============================================================
+  Improvement Loop [project] — DRY RUN (max 10 iterations)
+============================================================
+
+────────────────────────────────────────────────────────────
+  ITERATION 1/10
+────────────────────────────────────────────────────────────
+
+[1/5] Gathering context from prior iterations...
+[2/5] Running code audit via Claude API...
+       Audit response: 38 chars
+       Found 0 valid finding(s)
+Exit condition met — dry-run mode
+
+============================================================
+Iteration 1 — 2026-05-29T00:28:25.685298
+============================================================
+Audit score:       5.0/10
+Findings:          0 total, 0 high priority
+Branches created:  0
+Branches merged:   0
+Tests passed:      True
+Exit condition:    YES — stopping
+============================================================
+
+  Loop complete after 1 iteration(s).
+
+============================================================
+  IMPROVEMENT LOOP SUMMARY [project] — 1 iteration(s)
+============================================================
+  Iter 1: 0 findings, 0 merged, score=5.0/10, tests=pass [EXIT]
+
+  Findings:     0 total, 0 implemented, 0 pending
+
+  Status: Converged — all findings below threshold
+============================================================
+```
+
+Every iteration is appended to `averyloop_log.json` at the repo root. Each entry
+follows this schema (here, the entry produced by the dry run above):
+
+```json
+{
+  "iteration": 1,
+  "timestamp": "2026-05-29T00:28:25.685298",
+  "audit_scores": {
+    "specificity": 5.0,
+    "accuracy": 5.0,
+    "coverage": 5.0,
+    "prioritization": 5.0,
+    "domain_appropriateness": 5.0,
+    "overall": 5.0,
+    "flags": [],
+    "reasoning": "Dry-run mode — skipped API evaluation."
+  },
+  "findings": [],
+  "findings_count": 0,
+  "high_priority_findings": 0,
+  "branches_created": [],
+  "branches_merged": [],
+  "tests_passed": true,
+  "exit_condition_met": true
+}
+```
+
+In a live run, `findings` holds one tagged object per audit finding (`id`,
+`iteration`, `dimension`, `file`, `description`, `fix`, `importance`,
+`branch_name`, `status`), and `branches_created` / `branches_merged` are derived
+from those findings' branches.
 
 ## Configuration
 
