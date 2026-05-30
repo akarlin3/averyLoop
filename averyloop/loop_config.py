@@ -51,6 +51,15 @@ class LoopConfig:
     weight_complexity: float = 0.1      # weight of the complexity-delta signal
     weight_scope: float = 0.1           # weight of the scope-adherence signal
 
+    # ── Outcome-feedback memory (rag/outcome_memory.py) ──────────────────
+    # Persistent, rebuild-surviving store of accept/reject/revert outcomes,
+    # recalled as *additive* audit context.  Default on; disable for clean
+    # baselines and the benchmark's "memoryless" arm.
+    outcome_memory_enabled: bool = True
+    outcome_collection_name: str = "outcome_memory"  # distinct from codebase_index
+    outcome_recall_k: int = 5            # how many prior outcomes to recall
+    outcome_embed_dim: int = 256         # hashed bag-of-words embedding dim
+
     # ── Deterministic safety gate (safety_gate.py) ───────────────────────
     # Code-level merge veto that does not trust the judge.
     safety_gate_enabled: bool = True

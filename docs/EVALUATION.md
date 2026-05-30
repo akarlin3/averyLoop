@@ -9,6 +9,7 @@ unit-tested modules implement them:
 | `convergence.py` | When to stop | No |
 | `signals.py` + evaluator blend | Whether a change is good | LLM is **one** input |
 | `safety_gate.py` | Whether a merge is safe | No |
+| `outcomes.py` + `rag/outcome_memory.py` | What past fixes teach us | No (deterministic embedding) |
 
 All three are pure functions over plain data (history dicts, diff text, score
 dicts) and are tested without live LLM calls or real git state.
@@ -146,3 +147,31 @@ prompt-injectable.
 | `safety_allowlist_paths` | `[]` |
 
 (Project `read_only_dirs` from `project_config.yaml` are also enforced.)
+
+---
+
+## 4. Judge↔objective agreement (benchmark finding)
+
+The composite (§1) blends the LLM judge with objective signals precisely because
+neither is sufficient alone. The benchmark (`benchmark/`) quantifies *how much*
+the two agree by correlating, across audited fixtures, the LLM judge `overall`
+with the objective signal score (one pair per fixture audit).
+
+**Definition.** Agreement = **Spearman ρ** (rank) and **Pearson r** (linear)
+between the judge series and the objective series. Spearman is the headline: it
+measures whether the two *rank* changes the same way, independent of scale.
+
+**Finding (offline seeded-bug suite, n = 4 audits):** **Spearman ρ ≈ 0.26,
+Pearson r ≈ 0.48** — moderate positive agreement. The objective signals saturate
+near 10 for the three fixtures with passing tests and focused, in-scope diffs
+(`logic_bug`, `style_nit`, `revert_trap`), while the judge separates them sharply
+(8.5 / 2.5 / 6.0). Only the `safety_trap` scores low on objective signals (its
+out-of-scope write drops the scope sub-score).
+
+**Interpretation.** Objective signals and the judge agree on *direction* but not
+on *value*: measured signals cannot, by themselves, tell a high-value bug fix
+from a cosmetic nit (both have passing tests and tight diffs), whereas the judge
+can. Conversely the objective signals independently catch the scope violation.
+This is the empirical justification for the blend — and for keeping the LLM as
+*one* input rather than the oracle. The number is small-n and stated as such; see
+[`../benchmark/README.md`](../benchmark/README.md) for the full table and limits.

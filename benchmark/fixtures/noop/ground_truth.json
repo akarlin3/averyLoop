@@ -1,0 +1,10 @@
+{
+  "name": "noop",
+  "category": "noop",
+  "is_seeded_bug": false,
+  "description": "Already-clean code with passing tests. Nothing to fix — measures the false-positive (spurious merge) rate.",
+  "failing_test": null,
+  "expected_outcome": "no_change",
+  "read_only_dirs": [],
+  "findings": []
+}

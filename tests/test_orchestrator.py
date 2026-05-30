@@ -120,10 +120,12 @@ class TestPhaseTestAndMerge:
         # 3. post-merge (fail)
         mock_tests.side_effect = [True, True, False]
 
-        # Simulate subprocess calls: rebase, rev-parse, reset
+        # Simulate subprocess calls: rebase, pre-merge rev-parse, post-merge
+        # rev-parse (merge sha capture), reset --hard
         mock_subprocess.run.side_effect = [
             subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),   # rebase
-            subprocess.CompletedProcess(args=[], returncode=0, stdout="abc123\n", stderr=""),  # rev-parse
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="abc123\n", stderr=""),  # pre-merge rev-parse
+            subprocess.CompletedProcess(args=[], returncode=0, stdout="def456\n", stderr=""),  # post-merge rev-parse
             subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr=""),   # reset --hard
         ]
 
@@ -134,9 +136,10 @@ class TestPhaseTestAndMerge:
 
         orchestrator_v2._phase_test_and_merge(state)
 
-        # The finding should NOT be merged because post-merge tests failed
-        assert fs.finding.status == "implemented"
+        # Merged then auto-reverted on post-merge failure → 'reverted' outcome.
+        assert fs.finding.status == "reverted"
         assert fs.merged is False
+        assert fs.reverted is True
         assert state.all_tests_passed is False
 
     @patch.object(orchestrator_v2.git_utils, "checkout")

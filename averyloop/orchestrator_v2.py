@@ -54,6 +54,10 @@ class FindingState:
     tests_passed: Optional[bool] = None
     merged: bool = False
     error: Optional[str] = None
+    # Outcome-feedback signals (rag/outcome_memory.py):
+    safety_veto: bool = False     # safety gate blocked the merge
+    reverted: bool = False        # merged then auto-reverted (post-merge failure)
+    merge_sha: str = ""           # merge commit SHA when accepted
 
 
 @dataclass
@@ -105,6 +109,94 @@ def _get_diff(branch: str, base: str) -> str:
         capture_output=True, text=True, check=False,
     )
     return result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Outcome-feedback memory hooks (additive context only — never control flow)
+# ---------------------------------------------------------------------------
+
+def _maybe_inject_outcome_note(context: str, state: IterationState) -> str:
+    """Append recalled prior-outcome context to the audit context, if enabled.
+
+    Purely additive: on any failure, a cold store, or a disabled flag the
+    original *context* is returned unchanged, so this cannot destabilize the
+    loop.  Skipped in dry-run.
+    """
+    if state.dry_run:
+        return context
+    cfg = _get_loop_config()
+    if not getattr(cfg, "outcome_memory_enabled", True):
+        return context
+    try:
+        from averyloop.rag import outcome_memory
+        pcfg = get_project_config()
+        query = "\n".join(
+            [pcfg.description or "", context, *(pcfg.key_files or [])]
+        )
+        note = outcome_memory.recall_note(
+            query, repo_root=REPO_ROOT, k=getattr(cfg, "outcome_recall_k", 5)
+        )
+        if note:
+            print("       Outcome memory: recalled prior outcomes for similar code")
+            return (
+                context
+                + "\n\n## Prior outcomes for similar code (advisory)\n"
+                + note
+            )
+    except Exception as e:
+        print(f"       Outcome memory recall skipped: {e}")
+    return context
+
+
+def _per_finding_signals(fs: FindingState):
+    """Compute this finding's own objective signals from its diff (or None)."""
+    if not fs.diff:
+        return None
+    return _signals.compute_objective_signals(
+        tests_passed=fs.tests_passed,
+        diff=fs.diff,
+        intended_files={fs.finding.file},
+    )
+
+
+def _phase_record_outcomes(state: IterationState) -> None:
+    """Derive and persist an Outcome per implemented finding (additive).
+
+    Records only findings that produced a diff (a patch worth learning from).
+    Wrapped so a missing store / chromadb never affects the loop.  Skipped in
+    dry-run.
+    """
+    if state.dry_run:
+        return
+    cfg = _get_loop_config()
+    if not getattr(cfg, "outcome_memory_enabled", True):
+        return
+    try:
+        from averyloop.rag import outcome_memory
+        from averyloop import outcomes as _outcomes
+
+        records = []
+        for fs in state.finding_states:
+            if not fs.diff:
+                continue
+            records.append(
+                _outcomes.derive_outcome(
+                    fs.finding.to_log_dict(),
+                    merged=fs.merged,
+                    reverted=fs.reverted,
+                    safety_veto=fs.safety_veto,
+                    review_verdict=fs.review_verdict or None,
+                    tests_passed=fs.tests_passed,
+                    diff=fs.diff,
+                    signals=_per_finding_signals(fs),
+                    iteration=state.iteration,
+                    merge_sha=fs.merge_sha,
+                )
+            )
+        if records and outcome_memory.record_outcomes(records, repo_root=REPO_ROOT):
+            print(f"       Outcome memory: recorded {len(records)} outcome(s)")
+    except Exception as e:
+        print(f"       Outcome memory record skipped: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -215,6 +307,7 @@ def _phase_audit(state: IterationState) -> None:
     """Phase 1: audit the codebase and parse findings."""
     print(f"\n[1/5] Gathering context from prior iterations...")
     context = loop_tracker.get_context_for_next_iteration()
+    context = _maybe_inject_outcome_note(context, state)
 
     print(f"[2/5] Running code audit via Claude API...")
     state.audit_output = _run_audit(state.iteration, context, state.dry_run)
@@ -427,8 +520,9 @@ def _phase_test_and_merge(state: IterationState) -> None:
                           f"{finding.branch_name}:")
                     for v in verdict.violations:
                         print(f"      ✗ {v}")
-                    finding.status = "pending"
+                    finding.status = "vetoed"
                     fs.merged = False
+                    fs.safety_veto = True
                     state.all_tests_passed = False
                     continue
 
@@ -448,6 +542,11 @@ def _phase_test_and_merge(state: IterationState) -> None:
                 )
                 finding.status = "merged"
                 fs.merged = True
+                fs.merge_sha = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    capture_output=True, text=True, check=False,
+                    cwd=REPO_ROOT,
+                ).stdout.strip()
                 print(f"    Merged: {finding.branch_name}")
 
                 # Post-merge sanity check
@@ -464,8 +563,10 @@ def _phase_test_and_merge(state: IterationState) -> None:
                         capture_output=True, check=False,
                         cwd=REPO_ROOT,
                     )
-                    finding.status = "implemented"
+                    # Merged then immediately undone — a 'reverted' outcome.
+                    finding.status = "reverted"
                     fs.merged = False
+                    fs.reverted = True
                     state.all_tests_passed = False
             except Exception as e:
                 print(f"    Merge failed: {finding.branch_name} — {e}")
@@ -575,6 +676,9 @@ def run_loop(max_iterations: int = 10, dry_run: bool = False) -> list:
 
         # Phase 4: Test and merge
         _phase_test_and_merge(state)
+
+        # Record fix outcomes (accept/reject/revert) into the outcome memory.
+        _phase_record_outcomes(state)
 
         # Phase 5: Log
         entry = _phase_log(state)

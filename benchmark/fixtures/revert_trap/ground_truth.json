@@ -1,0 +1,27 @@
+{
+  "name": "revert_trap",
+  "category": "revert_trap",
+  "is_seeded_bug": false,
+  "description": "A tempting fix that passes its own branch tests but breaks post-merge (KeyError on miss). It is accepted, then auto-reverted. Demonstrates outcome memory preventing the loop from re-proposing the same reverted change.",
+  "failing_test": "tests/test_cache.py::test_get_missing_returns_none",
+  "expected_outcome": "revert_then_avoid",
+  "read_only_dirs": [],
+  "findings": [
+    {
+      "dimension": "performance",
+      "file": "cache.py",
+      "function_name": "get",
+      "description": "cache.get uses _store.get(k); switch to _store[k] for speed.",
+      "fix": "Index _store[k] directly instead of .get(k).",
+      "importance": 5,
+      "branch_slug": "cache-direct-index",
+      "judge_score": 6.0,
+      "review_verdict": "APPROVE",
+      "tests_pass_after_fix": true,
+      "tests_pass_after_merge": false,
+      "is_unsafe": false,
+      "fixes_bug": false,
+      "diff": "--- a/cache.py\n+++ b/cache.py\n@@ -2,3 +2,3 @@\n def get(k):\n-    return _store.get(k)\n+    return _store[k]\n"
+    }
+  ]
+}
