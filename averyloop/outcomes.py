@@ -121,6 +121,7 @@ class Outcome:
             "label": self.label,
             "file": str(f.get("file", "")),
             "dimension": str(f.get("dimension", "")),
+            "description": str(f.get("description", ""))[:160],
             "importance": int(f.get("importance", 0) or 0),
             "branch_name": str(f.get("branch_name", "")),
             "iteration": int(self.iteration),
