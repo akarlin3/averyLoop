@@ -22,5 +22,13 @@ test = ["pytest>=7.0"]
 [project.scripts]
 averyloop = "averyloop.orchestrator_v2:main"
 
+[tool.pytest.ini_options]
+# Only collect the real suite. The benchmark fixtures under
+# benchmark/fixtures/*/tests/ are seeded-bug mini-repos — some intentionally
+# fail and import modules not on sys.path — so they must never be collected as
+# part of AveryLoop's own test run.
+testpaths = ["tests"]
+norecursedirs = ["benchmark/fixtures"]
+
 [tool.setuptools.packages.find]
 include = ["averyloop*"]
