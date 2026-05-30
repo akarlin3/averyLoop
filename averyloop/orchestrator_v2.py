@@ -453,6 +453,39 @@ def _phase_test_and_merge(state: IterationState) -> None:
 # Phase 5: Log
 # ---------------------------------------------------------------------------
 
+def _build_objective_signals(state: IterationState):
+    """Compute this iteration's measured objective signals.
+
+    Aggregates the diffs of merged findings and the audit's intended scope,
+    plus optional coverage/complexity measurements that degrade gracefully to
+    ``None`` (and so drop out of the blend) when the tooling isn't installed.
+    Returns ``None`` in dry-run or when there is nothing to measure.
+    """
+    if state.dry_run:
+        return None
+
+    merged = [fs for fs in state.finding_states if fs.merged]
+    combined_diff = "\n".join(fs.diff for fs in merged if fs.diff)
+    intended_files = {fs.finding.file for fs in merged}
+
+    # Coverage/complexity are optional — None when the tool is absent.
+    coverage_pct = _signals.measure_coverage()
+    complexity = _signals.measure_complexity(sorted(intended_files)) if intended_files else None
+
+    return _signals.compute_objective_signals(
+        tests_passed=state.all_tests_passed,
+        diff=combined_diff,
+        intended_files=intended_files,
+        # Coverage/complexity deltas need a prior baseline; pass the current
+        # reading as both ends so the signal is neutral until a baseline is
+        # tracked (kept conservative rather than fabricating a delta).
+        prev_coverage_pct=coverage_pct,
+        curr_coverage_pct=coverage_pct,
+        prev_complexity=complexity,
+        curr_complexity=complexity,
+    )
+
+
 def _phase_log(state: IterationState) -> dict:
     """Phase 5: log the iteration and evaluate exit condition."""
     findings = [fs.finding for fs in state.finding_states]
@@ -462,6 +495,7 @@ def _phase_log(state: IterationState) -> dict:
         findings=findings,
         tests_passed=state.all_tests_passed,
         dry_run=state.dry_run,
+        objective_signals=_build_objective_signals(state),
     )
     return entry
 
