@@ -22,6 +22,9 @@ from typing import List, Optional
 
 from averyloop import loop_tracker
 from averyloop import git_utils
+from averyloop import signals as _signals
+from averyloop.convergence import evaluate_convergence
+from averyloop.safety_gate import evaluate_safety
 from averyloop.evaluator import Finding
 from averyloop.agents._api import api_call_with_retry as _api_call_with_retry
 from averyloop.agents.auditor import get_audit_system_prompt, collect_source_files
@@ -482,8 +485,10 @@ def run_loop(max_iterations: int = 10, dry_run: bool = False) -> list:
     print(f"  Improvement Loop [{project_name}] — {mode} (max {max_iterations} iterations)")
     print(f"{'='*60}\n")
 
+    cfg = _get_loop_config()
     entries: list = []
 
+    # max_iterations stays the hard ceiling; convergence may stop us earlier.
     for i in range(1, max_iterations + 1):
         print(f"\n{'─'*60}")
         print(f"  ITERATION {i}/{max_iterations}")
@@ -510,6 +515,16 @@ def run_loop(max_iterations: int = 10, dry_run: bool = False) -> list:
         if entry["exit_condition_met"]:
             print(f"\n  Loop complete after {i} iteration(s).")
             break
+
+        # Authored convergence / diminishing-returns detection (non-LLM).
+        # Skipped in dry-run, where there is no real signal to converge on.
+        if not dry_run and getattr(cfg, "convergence_enabled", True):
+            decision = evaluate_convergence(loop_tracker.load_log(), cfg)
+            if decision.stop:
+                print(f"\n  Convergence detected after {i} iteration(s): "
+                      f"{decision.reason}")
+                print(f"  Signal values: {decision.signal_values}")
+                break
 
     _print_run_summary(entries)
     return entries
