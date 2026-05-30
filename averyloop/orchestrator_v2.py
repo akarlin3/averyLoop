@@ -80,6 +80,24 @@ def _get_critical_flags() -> frozenset:
     return frozenset({"LEAKAGE_RISK", "PHI_RISK"})
 
 
+def _safety_gate_verdict(diff: str, intended_file: str):
+    """Run the deterministic, non-LLM safety gate on a proposed *diff*.
+
+    Pulls path rules from LoopConfig (protected/denylist/allowlist) and the
+    project's read-only directories, then defers to ``safety_gate``.
+    """
+    cfg = _get_loop_config()
+    pcfg = get_project_config()
+    return evaluate_safety(
+        diff,
+        {intended_file},
+        protected_paths=getattr(cfg, "safety_protected_paths", None),
+        denylist_paths=getattr(cfg, "safety_denylist_paths", None),
+        allowlist_paths=getattr(cfg, "safety_allowlist_paths", None),
+        read_only_dirs=pcfg.read_only_dirs,
+    )
+
+
 def _get_diff(branch: str, base: str) -> str:
     """Return the git diff between *base* and *branch*."""
     result = subprocess.run(
@@ -397,6 +415,22 @@ def _phase_test_and_merge(state: IterationState) -> None:
                 fs.tests_passed = False
                 state.all_tests_passed = False
                 continue
+
+            # Deterministic safety gate — a code-level veto that does not
+            # trust the judge. Runs *before* the merge and *in addition to*
+            # the judge-emitted critical flags. Cannot be prompt-injected away.
+            cfg = _get_loop_config()
+            if getattr(cfg, "safety_gate_enabled", True):
+                verdict = _safety_gate_verdict(fs.diff, finding.file)
+                if verdict.veto:
+                    print(f"    SAFETY GATE VETO — blocking merge of "
+                          f"{finding.branch_name}:")
+                    for v in verdict.violations:
+                        print(f"      ✗ {v}")
+                    finding.status = "pending"
+                    fs.merged = False
+                    state.all_tests_passed = False
+                    continue
 
             # Merge
             print(f"    Merging: {finding.branch_name}")
