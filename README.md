@@ -4,6 +4,14 @@
 
 An autonomous code audit → implement → review → merge pipeline powered by Claude. Uses specialized LLM agents (auditor, implementer, reviewer) with RAG-based codebase retrieval to continuously improve any code repository.
 
+**Measured, not just clever.** AveryLoop *learns within a project* — it records
+whether each past fix was accepted, vetoed, or reverted and recalls that history
+when auditing similar code — and ships a benchmark that quantifies the result.
+On the seeded-bug suite, convergence detection cuts iterations by **52%** with
+fix rate held, and outcome memory **halves post-merge reverts** while keeping
+false-accepts at **0%**. See [`benchmark/README.md`](benchmark/README.md) for the
+full results table and methodology.
+
 ## Features
 
 - **Four-agent pipeline**: audit, implement, review, merge — each with configurable system prompts
@@ -12,6 +20,8 @@ An autonomous code audit → implement → review → merge pipeline powered by 
 - **Automatic diminishing returns detection** — stops the loop when merge rates drop, importance stalls, and the same files keep surfacing
 - **Safety flags** for domain-specific risks (e.g. `LEAKAGE_RISK`, `PHI_RISK`) — configurable per project with critical flags that block automatic merge
 - **Git branch isolation** per fix with post-merge test validation — each improvement gets its own branch, tests run before and after merge
+- **Outcome-feedback RAG** — records every fix outcome (accepted / vetoed / reverted) in a persistent, rebuild-surviving ChromaDB store and recalls it as *additive* audit context ("2 prior fixes to similar code accepted, 1 reverted"), so the loop stops repeating known-bad changes
+- **Benchmark harness** — runs AveryLoop against seeded-bug fixtures and reports fix rate, false-accept rate, convergence savings, and judge↔objective agreement, with convergence-on-vs-off and memory-on-vs-off comparisons
 - **Full iteration logging** with score drift detection, finding deduplication, and structured JSON history
 
 ## How it works
@@ -315,6 +325,8 @@ Controls API models, token limits, exit strategy, and diminishing returns thresh
 | `convergence.py` | **Authored, non-LLM** stop detection (plateau / decay / floor) |
 | `signals.py` | **Pure** objective sub-scores (tests, coverage, complexity, diff size, scope) |
 | `safety_gate.py` | **Deterministic, non-LLM** merge veto |
+| `outcomes.py` | **Pure** outcome derivation (accepted/rejected/reverted) + revert detection |
+| `rag/outcome_memory.py` | Persistent outcome store + recall as additive audit context |
 
 The last three are pure, unit-tested modules with no LLM calls or live git
 state — the authored-logic core. See [`docs/EVALUATION.md`](docs/EVALUATION.md).
@@ -354,6 +366,27 @@ the merge — regardless of the judge's verdict — on: out-of-scope / read-only
 writes, removal of test assertions, credential-like patterns, and edits to the
 loop's own safety code. It is defense-in-depth: it runs *in addition to* the
 judge-emitted critical flags and cannot be prompt-injected away.
+
+### Outcome-feedback memory (the loop learns within a project)
+
+AveryLoop is no longer memoryless across runs. After each iteration,
+`outcomes.py` derives a typed outcome for every implemented finding —
+**accepted** (merged and not reverted), **rejected** (safety-gate veto, reviewer
+rejection, or a test failure), or **reverted** (merged then undone, incl.
+post-merge auto-reverts and human `git revert`s detected from history) — and
+`rag/outcome_memory.py` embeds it into a **dedicated, persistent ChromaDB
+collection** (`outcome_memory`).
+
+That collection is keyed separately from `codebase_index`, so it **survives the
+index rebuild** that happens every run and accumulates over time. When the next
+audit runs, the loop recalls outcomes for *similar code* and injects a short
+advisory note as **additive context only** — e.g. *"previous fixes to similar
+code: 2 accepted, 1 reverted — the revert removed a guard clause"* — never a
+control-flow change, so it cannot destabilize the loop. It is gated by
+`outcome_memory_enabled` (default on) and can be turned off for clean baselines.
+Embedding is deterministic and offline (a hashed bag-of-words vectorizer), so it
+adds no API/network dependency. See [`benchmark/README.md`](benchmark/README.md)
+for the measured effect (reverts halved, wasted re-attempts eliminated).
 
 ## Adapting to Your Project
 
@@ -471,6 +504,7 @@ averyloop/
 ├── convergence.py          # Authored, non-LLM stop detection (plateau/decay/floor)
 ├── signals.py              # Pure objective sub-scores (tests/coverage/complexity/scope)
 ├── safety_gate.py          # Deterministic, non-LLM merge veto
+├── outcomes.py             # Pure outcome derivation (accept/reject/revert) + revert detection
 ├── git_utils.py            # Git operations + test runners
 ├── loop_tracker.py         # Iteration logging + context generation
 ├── orchestrator_v2.py      # Main loop: audit → fix → test → safety gate → merge
@@ -482,7 +516,14 @@ averyloop/
 └── rag/
     ├── chunker.py           # Language-aware code chunking
     ├── indexer.py           # ChromaDB index build + query
-    └── retriever.py         # Semantic code retrieval
+    ├── retriever.py         # Semantic code retrieval
+    └── outcome_memory.py    # Persistent accept/reject/revert memory + recall
+
+benchmark/                  # Offline, measured evaluation (see benchmark/README.md)
+├── fixtures/                # Seeded-bug mini-repos with encoded ground truth
+├── stub_agents.py           # Deterministic agents; real decisions via authored logic
+├── metrics.py               # Fix rate, false-accept, convergence savings, agreement
+└── runner.py                # Two-arm comparison + results table + JSON
 ```
 
 ## Contributing

@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Outcome-feedback RAG** (`outcomes.py` + `rag/outcome_memory.py`): The loop now
+  learns within a project. `outcomes.py` derives a typed outcome —
+  `accepted` / `rejected` / `reverted` — for each implemented finding from existing
+  loop state (merge status, safety-gate veto, reviewer verdict, test results) plus
+  post-merge revert detection (scanning `This reverts commit <sha>` git history and
+  capturing the orchestrator's own post-merge auto-reverts). `rag/outcome_memory.py`
+  embeds outcomes into a **dedicated, persistent ChromaDB collection**
+  (`outcome_memory`) that is keyed separately from `codebase_index` so it
+  **survives the per-run index rebuild** and accumulates over time. `recall_outcomes`
+  returns prior outcomes for similar code and `synthesize_note` produces a short
+  advisory note injected into the audit as **additive context only** (no
+  control-flow change). Embedding uses a deterministic, dependency-free hashed
+  bag-of-words vectorizer, so the store is fully offline (no model download, no
+  API key). Gated by `outcome_memory_enabled` (default on).
+
+- **`Finding` status values** `vetoed` and `reverted` (`evaluator.py`):
+  backward-compatible additions to the status `Literal` and `VALID_STATUSES`
+  (existing consumers only test `==` / `!=` `"merged"`); the orchestrator now sets
+  them on a safety-gate veto and a post-merge auto-revert respectively.
+
+- **Benchmark harness** (`benchmark/`): Runs AveryLoop's authored decision logic
+  against five seeded-bug fixtures with encoded ground truth (a real logic bug, a
+  safety trap, a style nit, a no-op, and a revert trap) and reports **fix rate**,
+  **false-accept rate**, **convergence savings**, and **judge↔objective agreement**.
+  Default mode is fully offline and deterministic: stub agents supply
+  findings/fixes/reviews/scores from ground truth while the real `signals`,
+  `safety_gate`, composite blend, `convergence`, and outcome memory make every
+  decision. Includes two-arm comparisons (convergence on vs fixed baseline; memory
+  on vs off), a results table, and machine-readable JSON. Headline (offline):
+  fix rate 0.50, false-accept 0.00, convergence savings ~52% with quality held,
+  reverts halved and wasted re-attempts eliminated by outcome memory. Opt-in live
+  mode via `AVERYLOOP_BENCH_LIVE=1`.
+
+- **Config knobs** (`loop_config.py`): `outcome_memory_enabled`,
+  `outcome_collection_name`, `outcome_recall_k`, `outcome_embed_dim`.
+
+- **Tests**: `tests/test_outcomes.py`, `tests/test_outcome_memory.py`, and
+  `tests/test_benchmark.py` (48 tests) — outcome classification and revert
+  detection (incl. a live-git integration test), record→recall round-trips against
+  a temp Chroma collection with persistence across a simulated rebuild, and the
+  metric formulas + deterministic two-arm comparison. No live LLM calls.
+
+- **Docs**: `benchmark/README.md` with the full results table, metric definitions,
+  and stated limits; `docs/EVALUATION.md` gains the judge↔objective agreement
+  finding; top-level README documents the outcome-feedback behavior and headline
+  numbers.
+
 - **Convergence detection** (`convergence.py`): A pure, non-LLM
   `evaluate_convergence()` that inspects iteration history and returns a
   `ConvergenceDecision {stop, reason, signal_values}`. Implements a
