@@ -22,6 +22,9 @@ from typing import List, Optional
 
 from averyloop import loop_tracker
 from averyloop import git_utils
+from averyloop import signals as _signals
+from averyloop.convergence import evaluate_convergence
+from averyloop.safety_gate import evaluate_safety
 from averyloop.evaluator import Finding
 from averyloop.agents._api import api_call_with_retry as _api_call_with_retry
 from averyloop.agents.auditor import get_audit_system_prompt, collect_source_files
@@ -75,6 +78,24 @@ def _get_critical_flags() -> frozenset:
     if pcfg.critical_flags:
         return frozenset(pcfg.critical_flags)
     return frozenset({"LEAKAGE_RISK", "PHI_RISK"})
+
+
+def _safety_gate_verdict(diff: str, intended_file: str):
+    """Run the deterministic, non-LLM safety gate on a proposed *diff*.
+
+    Pulls path rules from LoopConfig (protected/denylist/allowlist) and the
+    project's read-only directories, then defers to ``safety_gate``.
+    """
+    cfg = _get_loop_config()
+    pcfg = get_project_config()
+    return evaluate_safety(
+        diff,
+        {intended_file},
+        protected_paths=getattr(cfg, "safety_protected_paths", None),
+        denylist_paths=getattr(cfg, "safety_denylist_paths", None),
+        allowlist_paths=getattr(cfg, "safety_allowlist_paths", None),
+        read_only_dirs=pcfg.read_only_dirs,
+    )
 
 
 def _get_diff(branch: str, base: str) -> str:
@@ -395,6 +416,22 @@ def _phase_test_and_merge(state: IterationState) -> None:
                 state.all_tests_passed = False
                 continue
 
+            # Deterministic safety gate — a code-level veto that does not
+            # trust the judge. Runs *before* the merge and *in addition to*
+            # the judge-emitted critical flags. Cannot be prompt-injected away.
+            cfg = _get_loop_config()
+            if getattr(cfg, "safety_gate_enabled", True):
+                verdict = _safety_gate_verdict(fs.diff, finding.file)
+                if verdict.veto:
+                    print(f"    SAFETY GATE VETO — blocking merge of "
+                          f"{finding.branch_name}:")
+                    for v in verdict.violations:
+                        print(f"      ✗ {v}")
+                    finding.status = "pending"
+                    fs.merged = False
+                    state.all_tests_passed = False
+                    continue
+
             # Merge
             print(f"    Merging: {finding.branch_name}")
             # Record the pre-merge commit so we can revert if post-merge
@@ -450,6 +487,39 @@ def _phase_test_and_merge(state: IterationState) -> None:
 # Phase 5: Log
 # ---------------------------------------------------------------------------
 
+def _build_objective_signals(state: IterationState):
+    """Compute this iteration's measured objective signals.
+
+    Aggregates the diffs of merged findings and the audit's intended scope,
+    plus optional coverage/complexity measurements that degrade gracefully to
+    ``None`` (and so drop out of the blend) when the tooling isn't installed.
+    Returns ``None`` in dry-run or when there is nothing to measure.
+    """
+    if state.dry_run:
+        return None
+
+    merged = [fs for fs in state.finding_states if fs.merged]
+    combined_diff = "\n".join(fs.diff for fs in merged if fs.diff)
+    intended_files = {fs.finding.file for fs in merged}
+
+    # Coverage/complexity are optional — None when the tool is absent.
+    coverage_pct = _signals.measure_coverage()
+    complexity = _signals.measure_complexity(sorted(intended_files)) if intended_files else None
+
+    return _signals.compute_objective_signals(
+        tests_passed=state.all_tests_passed,
+        diff=combined_diff,
+        intended_files=intended_files,
+        # Coverage/complexity deltas need a prior baseline; pass the current
+        # reading as both ends so the signal is neutral until a baseline is
+        # tracked (kept conservative rather than fabricating a delta).
+        prev_coverage_pct=coverage_pct,
+        curr_coverage_pct=coverage_pct,
+        prev_complexity=complexity,
+        curr_complexity=complexity,
+    )
+
+
 def _phase_log(state: IterationState) -> dict:
     """Phase 5: log the iteration and evaluate exit condition."""
     findings = [fs.finding for fs in state.finding_states]
@@ -459,6 +529,7 @@ def _phase_log(state: IterationState) -> dict:
         findings=findings,
         tests_passed=state.all_tests_passed,
         dry_run=state.dry_run,
+        objective_signals=_build_objective_signals(state),
     )
     return entry
 
@@ -482,8 +553,10 @@ def run_loop(max_iterations: int = 10, dry_run: bool = False) -> list:
     print(f"  Improvement Loop [{project_name}] — {mode} (max {max_iterations} iterations)")
     print(f"{'='*60}\n")
 
+    cfg = _get_loop_config()
     entries: list = []
 
+    # max_iterations stays the hard ceiling; convergence may stop us earlier.
     for i in range(1, max_iterations + 1):
         print(f"\n{'─'*60}")
         print(f"  ITERATION {i}/{max_iterations}")
@@ -510,6 +583,16 @@ def run_loop(max_iterations: int = 10, dry_run: bool = False) -> list:
         if entry["exit_condition_met"]:
             print(f"\n  Loop complete after {i} iteration(s).")
             break
+
+        # Authored convergence / diminishing-returns detection (non-LLM).
+        # Skipped in dry-run, where there is no real signal to converge on.
+        if not dry_run and getattr(cfg, "convergence_enabled", True):
+            decision = evaluate_convergence(loop_tracker.load_log(), cfg)
+            if decision.stop:
+                print(f"\n  Convergence detected after {i} iteration(s): "
+                      f"{decision.reason}")
+                print(f"  Signal values: {decision.signal_values}")
+                break
 
     _print_run_summary(entries)
     return entries

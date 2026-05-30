@@ -7,7 +7,9 @@ import sys
 from datetime import datetime
 from typing import List, Optional  # noqa: F401 — used by callers via import
 
-from averyloop.evaluator import Finding, score_audit, should_continue_loop
+from averyloop.evaluator import (
+    Finding, score_audit, should_continue_loop, augment_scores_with_objective,
+)
 
 LOG_FILE = os.path.join(os.getcwd(), "averyloop_log.json")
 
@@ -46,18 +48,29 @@ def log_iteration(
     audit_output: str,
     findings: List[Finding],
     tests_passed: bool,
-    dry_run: bool = False
+    dry_run: bool = False,
+    objective_signals=None,
 ) -> dict:
     """
     Log one complete loop iteration.
     Derives branches_created and branches_merged from findings.
     Returns the entry so the caller can inspect it.
+
+    If *objective_signals* (an ``ObjectiveSignals`` from ``signals.py``) is
+    provided, the LLM judge score is blended with the measured signals into a
+    ``composite`` score stored alongside the raw scores — keeping the LLM as
+    one input among measured ones.  Backward compatible: when omitted, scoring
+    behaves exactly as before.
     """
     log = load_log()
     iteration = get_current_iteration(log)
 
     # Score the audit
     scores = score_audit(audit_output, dry_run=dry_run)
+
+    # Blend in measured objective signals (composite score) when available.
+    if not dry_run and objective_signals is not None:
+        scores = augment_scores_with_objective(scores, signals=objective_signals)
 
     # Surface evaluator failures so the loop doesn't silently proceed
     # on default fallback scores

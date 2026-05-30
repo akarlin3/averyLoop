@@ -5,7 +5,9 @@ from pydantic import ValidationError
 
 from averyloop.evaluator import (
     Finding, should_continue_loop, check_diminishing_returns,
+    blend_scores, augment_scores_with_objective,
 )
+from averyloop.signals import compute_objective_signals
 from averyloop import loop_tracker
 from averyloop.loop_config import (
     LoopConfig, load_loop_config, get_config, reset_config,
@@ -420,3 +422,58 @@ class TestLoopConfig:
         findings = [_make_finding(importance=5)]
         result = should_continue_loop(good_scores, findings)
         assert result is False
+
+
+# ── Composite score blend (LLM + objective signals) ──────────────────────────
+
+class TestBlendScores:
+    """blend_scores / augment_scores_with_objective behaviour."""
+
+    _LLM = {
+        "specificity": 7.0, "accuracy": 7.0, "coverage": 7.0,
+        "prioritization": 7.0, "domain_appropriateness": 7.0,
+        "overall": 6.0, "flags": [], "reasoning": "ok",
+    }
+
+    def test_composite_equals_llm_without_signals(self):
+        cfg = LoopConfig()
+        blend = blend_scores(self._LLM, signals=None, cfg=cfg)
+        assert blend["composite"] == 6.0
+        assert blend["weights_used"] == {"llm": 1.0}
+
+    def test_composite_blends_available_signals(self):
+        cfg = LoopConfig(weight_llm=0.5, weight_tests=0.5,
+                         weight_coverage=0.0, weight_complexity=0.0,
+                         weight_scope=0.0)
+        # tests pass (10), no diff/coverage/complexity → only tests available.
+        sig = compute_objective_signals(tests_passed=True)
+        blend = blend_scores(self._LLM, signals=sig, cfg=cfg)
+        # 0.5*6 (llm) + 0.5*10 (tests) = 8.0
+        assert blend["composite"] == 8.0
+        assert set(blend["weights_used"]) == {"llm", "tests"}
+
+    def test_weights_renormalize_when_signal_absent(self):
+        # Coverage weight is configured but no coverage signal is available;
+        # remaining weights (llm + tests) must renormalize to sum to 1.
+        cfg = LoopConfig(weight_llm=0.4, weight_tests=0.4,
+                         weight_coverage=0.2, weight_complexity=0.0,
+                         weight_scope=0.0)
+        sig = compute_objective_signals(tests_passed=True)
+        blend = blend_scores(self._LLM, signals=sig, cfg=cfg)
+        used = blend["weights_used"]
+        assert pytest.approx(sum(used.values()), abs=1e-9) == 1.0
+        assert "coverage" not in used
+        # 0.4/0.8 * 6 + 0.4/0.8 * 10 = 8.0
+        assert blend["composite"] == pytest.approx(8.0, abs=1e-9)
+
+    def test_augment_preserves_raw_llm_and_adds_composite(self):
+        cfg = LoopConfig()
+        sig = compute_objective_signals(tests_passed=True)
+        enriched = augment_scores_with_objective(self._LLM, signals=sig, cfg=cfg)
+        # Raw LLM fields untouched
+        assert enriched["overall"] == 6.0
+        assert enriched["llm_overall"] == 6.0
+        # Composite + audit trail present
+        assert "composite" in enriched
+        assert "blend_weights" in enriched
+        assert enriched["objective_signals"]["sub_scores"]["tests"] == 10.0

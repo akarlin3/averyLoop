@@ -271,6 +271,89 @@ def score_audit(audit_output: str, dry_run: bool = False) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Composite score — blend the LLM judge with measured objective signals
+# ---------------------------------------------------------------------------
+
+def blend_scores(llm_scores: dict, signals=None, cfg=None) -> dict:
+    """Blend the LLM judge's ``overall`` score with objective sub-scores.
+
+    The judge is now *one input*, not the oracle.  Weights come from config
+    (``weight_llm`` / ``weight_tests`` / ``weight_coverage`` /
+    ``weight_complexity`` / ``weight_scope``) and are **renormalized over
+    whichever signals are actually available** — so a target project missing
+    coverage/complexity tooling drops those signals and the remaining weights
+    are rescaled rather than crashing.
+
+    Parameters
+    ----------
+    llm_scores:
+        The dict returned by :func:`score_audit` (must contain ``overall``).
+    signals:
+        An ``ObjectiveSignals`` (from ``signals.py``) or ``None``.  When
+        ``None`` or with no available objective signals, the composite equals
+        the LLM overall score.
+    cfg:
+        A ``LoopConfig``-like object; loaded from cache if ``None``.
+
+    Returns
+    -------
+    dict
+        ``{composite, llm_overall, weights_used, components}`` — all kept so
+        the blend is auditable in the iteration log.
+    """
+    if cfg is None:
+        from averyloop.loop_config import get_config
+        cfg = get_config()
+
+    weight_map = {
+        "llm": float(getattr(cfg, "weight_llm", 0.5)),
+        "tests": float(getattr(cfg, "weight_tests", 0.2)),
+        "coverage": float(getattr(cfg, "weight_coverage", 0.1)),
+        "complexity": float(getattr(cfg, "weight_complexity", 0.1)),
+        "scope": float(getattr(cfg, "weight_scope", 0.1)),
+    }
+
+    llm_overall = float(llm_scores.get("overall", 0.0))
+    components = {"llm": llm_overall}
+
+    if signals is not None:
+        for name in ("tests", "coverage", "complexity", "scope"):
+            if signals.available.get(name):
+                components[name] = float(signals.sub_scores[name])
+
+    # Renormalize over present components (the LLM is always present).
+    present_weights = {k: weight_map[k] for k in components}
+    total = sum(present_weights.values()) or 1.0
+    composite = sum(components[k] * present_weights[k] for k in components) / total
+
+    return {
+        "composite": round(composite, 4),
+        "llm_overall": llm_overall,
+        "weights_used": {k: round(present_weights[k] / total, 4)
+                         for k in present_weights},
+        "components": components,
+    }
+
+
+def augment_scores_with_objective(scores: dict, signals=None, cfg=None) -> dict:
+    """Return a copy of *scores* enriched with the composite blend.
+
+    Adds ``composite``, ``llm_overall``, ``blend_weights`` and
+    ``objective_signals`` keys.  The raw LLM dimension scores and ``overall``
+    are left untouched, so classic exit thresholds keep working while
+    convergence and reporting can prefer the composite.
+    """
+    enriched = dict(scores)
+    blend = blend_scores(scores, signals=signals, cfg=cfg)
+    enriched["composite"] = blend["composite"]
+    enriched["llm_overall"] = blend["llm_overall"]
+    enriched["blend_weights"] = blend["weights_used"]
+    if signals is not None:
+        enriched["objective_signals"] = signals.to_log_dict()
+    return enriched
+
+
 def check_diminishing_returns(log: list, cfg=None) -> bool:
     """Return True (stop the loop) if diminishing returns detected.
 

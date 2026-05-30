@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Convergence detection** (`convergence.py`): A pure, non-LLM
+  `evaluate_convergence()` that inspects iteration history and returns a
+  `ConvergenceDecision {stop, reason, signal_values}`. Implements a
+  min-iteration floor, plateau detection (score improvement below
+  `convergence_epsilon` for `convergence_patience` consecutive iterations,
+  with score drops counting as stalls), and decay detection (no fixes accepted
+  for `convergence_patience` iterations). Wired into `run_loop`, which now
+  breaks early on convergence — logging the reason — bounded by `max_iterations`.
+
+- **Objective-signal evaluator** (`signals.py`): Pure functions computing
+  normalized `0–10` sub-scores for test pass/fail (with a test-count-shrink
+  penalty), coverage delta, complexity delta, diff size, and scope adherence
+  (fraction of changed files within the audit's intended scope). Includes pure
+  diff/pytest parsers and optional `coverage`/`radon` measurement wrappers that
+  return `None` (never raise) when the tooling is absent.
+
+- **Composite score blend** (`evaluator.blend_scores` /
+  `augment_scores_with_objective`): The LLM judge's `overall` is now blended
+  with the available objective sub-scores using config weights (defaults
+  `weight_llm=0.5`, `weight_tests=0.2`, `weight_coverage=0.1`,
+  `weight_complexity=0.1`, `weight_scope=0.1`), renormalized over whichever
+  signals are present so missing tooling degrades gracefully. The raw LLM score
+  and every objective signal are preserved in `averyloop_log.json`. The judge is
+  now one input, not the oracle.
+
+- **Deterministic safety gate** (`safety_gate.py`): A pure, non-LLM
+  `evaluate_safety()` returning `SafetyVerdict {veto, violations}` from
+  code-level checks — out-of-scope/read-only writes, removal of test assertions,
+  credential-like patterns, and edits to the loop's own safety code. Wired into
+  `_phase_test_and_merge` before the merge: a veto blocks the merge regardless
+  of the judge verdict, in addition to (not instead of) the judge-emitted
+  critical flags.
+
+- **Config knobs** (`loop_config.py`): `convergence_enabled`,
+  `convergence_epsilon`, `convergence_patience`, `min_iterations`, the five
+  composite `weight_*` fields, `safety_gate_enabled`, `safety_protected_paths`,
+  `safety_denylist_paths`, and `safety_allowlist_paths`.
+
+- **Tests**: `tests/test_convergence.py`, `tests/test_signals.py`, and
+  `tests/test_safety_gate.py` plus composite-blend tests — all assert the
+  authored logic with no live LLM calls.
+
+- **Docs**: `docs/EVALUATION.md` specifying the composite formula, each signal's
+  range, the convergence criteria, and the safety-gate ruleset; README updated
+  for the new stopping behavior, composite blend, and safety gate.
+
 ## [2.0.0] - 2026-03-30
 
 ### Added

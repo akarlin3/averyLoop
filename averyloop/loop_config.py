@@ -7,8 +7,8 @@ automatically (same pattern as ``parse_config.m`` for the MATLAB pipeline).
 
 import json
 import os
-from dataclasses import dataclass, fields
-from typing import Literal
+from dataclasses import dataclass, field, fields
+from typing import List, Literal
 
 CONFIG_PATH = os.path.join(os.getcwd(), "averyloop_config.json")
 
@@ -33,6 +33,39 @@ class LoopConfig:
     dr_max_avg_importance: float = 3.5   # avg importance ceiling across window
     dr_min_file_repeats: int = 3         # same file must appear in >= N iterations
     dr_max_audit_score: float = 8.5      # no iteration may exceed this score
+
+    # ── Convergence / diminishing-returns detection (convergence.py) ─────
+    # Authored, non-LLM stop logic layered on top of max_iterations.
+    convergence_enabled: bool = True     # break run_loop early on convergence
+    convergence_epsilon: float = 0.25    # min score gain that counts as progress
+    convergence_patience: int = 2        # k consecutive stalled iters → plateau
+    min_iterations: int = 2              # floor: never stop before this iteration
+
+    # ── Composite-score blend weights (signals.py + evaluator blend) ─────
+    # The LLM judge is one input among measured objective signals.  Weights
+    # are renormalized over whichever signals are actually available, so a
+    # target project missing coverage/complexity tooling degrades gracefully.
+    weight_llm: float = 0.5              # weight of the LLM judge overall score
+    weight_tests: float = 0.2           # weight of the test pass/fail signal
+    weight_coverage: float = 0.1        # weight of the coverage-delta signal
+    weight_complexity: float = 0.1      # weight of the complexity-delta signal
+    weight_scope: float = 0.1           # weight of the scope-adherence signal
+
+    # ── Deterministic safety gate (safety_gate.py) ───────────────────────
+    # Code-level merge veto that does not trust the judge.
+    safety_gate_enabled: bool = True
+    # The loop's own authored-logic core — edits here are vetoed so the gate
+    # cannot be prompt-injected away by a fix that rewrites the gate itself.
+    safety_protected_paths: List[str] = field(
+        default_factory=lambda: [
+            "averyloop/safety_gate.py",
+            "averyloop/convergence.py",
+            "averyloop/signals.py",
+            "averyloop/evaluator.py",
+        ]
+    )
+    safety_denylist_paths: List[str] = field(default_factory=list)
+    safety_allowlist_paths: List[str] = field(default_factory=list)
 
     # ── API ──────────────────────────────────────────────────────────────
     # If empty, falls back to ANTHROPIC_API_KEY env var (Anthropic SDK default).

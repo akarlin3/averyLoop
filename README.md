@@ -17,9 +17,25 @@ An autonomous code audit → implement → review → merge pipeline powered by 
 ## How it works
 
 Each iteration runs five phases. RAG retrieval feeds the audit; every finding is
-implemented on its own branch and must clear a reviewer gate and a pre/post-merge
-test gate before it lands. The loop repeats until findings stall or diminishing
-returns are detected.
+implemented on its own branch and must clear a reviewer gate, a **deterministic
+safety gate**, and a pre/post-merge test gate before it lands. After each
+iteration an **authored convergence detector** decides whether the loop has
+stopped improving — the loop is no longer a fixed iteration count.
+
+The loop's hard decisions now have a code-level backbone, not just an LLM:
+
+- **Convergence detection** (`convergence.py`) decides *when to stop* from the
+  iteration history — plateau, decay, and a min-iteration floor — bounded by
+  `max_iterations`.
+- **Composite score** (`signals.py` + the evaluator blend) decides *whether a
+  change is good* by blending the LLM judge with measured signals (tests,
+  coverage, complexity, diff size, scope adherence). The judge is now one
+  input, not the oracle.
+- **Deterministic safety gate** (`safety_gate.py`) decides *whether a merge is
+  safe* with non-LLM code checks that cannot be prompt-injected away.
+
+See [`docs/EVALUATION.md`](docs/EVALUATION.md) for the exact formulas, signal
+ranges, convergence criteria, and safety ruleset.
 
 ```mermaid
 flowchart TD
@@ -34,14 +50,17 @@ flowchart TD
     Review -->|APPROVE| Test{4. Test &amp; merge<br/>pre/post-merge test gate}
 
     Test -->|tests fail| Hold[Keep as implemented<br/>no merge]
-    Test -->|tests pass| Merge[Merge into target branch]
+    Test -->|tests pass| Gate{Safety gate<br/>non-LLM merge veto}
 
-    Merge --> Log[5. Log &amp; evaluate<br/>score audit, write JSON history]
+    Gate -->|veto| Hold
+    Gate -->|clean| Merge[Merge into target branch]
+
+    Merge --> Log[5. Log &amp; evaluate<br/>composite score, write JSON history]
     Skip --> Log
     Delete --> Log
     Hold --> Log
 
-    Log --> Exit{Diminishing returns or<br/>no findings above threshold?}
+    Log --> Exit{Converged?<br/>plateau / decay / no findings}
     Exit -->|no| Audit
     Exit -->|yes| Stop([Stop — converged])
 ```
@@ -230,6 +249,19 @@ Controls API models, token limits, exit strategy, and diminishing returns thresh
 | `importance_threshold` | `2` | Findings >= this keep the loop going |
 | `min_coverage_score` | `6.0` | Coverage below this keeps the loop going |
 | `dr_window` | `4` | Iterations to examine for diminishing returns |
+| `convergence_enabled` | `true` | Break the loop early on convergence |
+| `convergence_epsilon` | `0.25` | Min score gain that counts as progress |
+| `convergence_patience` | `2` | Consecutive stalled iterations → plateau |
+| `min_iterations` | `2` | Floor: never stop before this iteration |
+| `weight_llm` | `0.5` | Composite weight of the LLM judge score |
+| `weight_tests` | `0.2` | Composite weight of the test signal |
+| `weight_coverage` | `0.1` | Composite weight of the coverage-delta signal |
+| `weight_complexity` | `0.1` | Composite weight of the complexity-delta signal |
+| `weight_scope` | `0.1` | Composite weight of the scope-adherence signal |
+| `safety_gate_enabled` | `true` | Run the deterministic merge veto |
+| `safety_protected_paths` | loop safety code | Paths a fix may not edit |
+| `safety_denylist_paths` | `[]` | Extra read-only path prefixes |
+| `safety_allowlist_paths` | `[]` | Paths exempt from the scope check |
 | `audit_model` | `"claude-opus-4-6"` | Model for code audits |
 | `fix_model` | `"claude-opus-4-6"` | Model for generating fixes |
 | `judge_model` | `"claude-opus-4-6"` | Model for scoring audits |
@@ -250,9 +282,9 @@ Controls API models, token limits, exit strategy, and diminishing returns thresh
 │       a. Create branch                                   │
 │       b. Generate fix (Implementer)                      │
 │       c. Run tests (syntax check + test suite)           │
-│       d. Merge if tests pass                             │
-│    5. Score the audit (Judge Agent)                       │
-│    6. Log iteration + check exit conditions               │
+│       d. Safety gate (non-LLM veto) — then merge         │
+│    5. Score: blend Judge + objective signals (composite) │
+│    6. Log iteration; convergence detector checks for stop │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -263,7 +295,7 @@ Controls API models, token limits, exit strategy, and diminishing returns thresh
 | **Auditor** | `agents/auditor.py` | Scans the codebase and returns structured JSON findings with file, line, severity, and suggested fix |
 | **Implementer** | `agents/implementer.py` | Takes a finding and the original file, returns the complete updated file |
 | **Reviewer** | `agents/reviewer.py` | Evaluates patches for correctness, test coverage, and convention adherence |
-| **Judge** | `evaluator.py` | Scores the audit on 6 dimensions (0-10 each), returns flags for safety issues |
+| **Judge** | `evaluator.py` | Scores the audit on 6 dimensions (0-10 each), returns flags; its score is then blended with objective signals into a composite |
 
 ### RAG Layer
 
@@ -280,14 +312,48 @@ Controls API models, token limits, exit strategy, and diminishing returns thresh
 | `loop_config.py` | Loads loop tuning JSON config with cached singleton |
 | `loop_tracker.py` | Logs iterations, tracks findings, detects score drift |
 | `git_utils.py` | Branch creation, checkout, merge, test runners, syntax checks |
+| `convergence.py` | **Authored, non-LLM** stop detection (plateau / decay / floor) |
+| `signals.py` | **Pure** objective sub-scores (tests, coverage, complexity, diff size, scope) |
+| `safety_gate.py` | **Deterministic, non-LLM** merge veto |
+
+The last three are pure, unit-tested modules with no LLM calls or live git
+state — the authored-logic core. See [`docs/EVALUATION.md`](docs/EVALUATION.md).
 
 ### Exit Conditions
 
-The loop stops when one of these is met:
+The loop stops when one of these is met (bounded always by `max_iterations`):
 
-1. **Classic**: No findings above the importance threshold AND audit coverage is sufficient AND no critical flags
-2. **Diminishing returns**: Over the last N iterations, merge rate is low, average importance is low, the same files keep appearing, and audit scores aren't improving
-3. **Max iterations reached**
+1. **Convergence** (`convergence.py`, authored, non-LLM): after a
+   `min_iterations` floor, the loop stops on **plateau** (composite/judge
+   score improves by less than `convergence_epsilon` for
+   `convergence_patience` consecutive iterations — a score *drop* counts as a
+   stall too) or **decay** (no fixes accepted for `convergence_patience`
+   iterations). The stop reason and signal values are logged.
+2. **Classic**: No findings above the importance threshold AND audit coverage
+   is sufficient AND no critical flags.
+3. **Diminishing returns** (legacy detector): over the last N iterations, merge
+   rate is low, average importance is low, the same files keep appearing, and
+   audit scores aren't improving.
+4. **Max iterations reached** — the hard ceiling.
+
+### Composite score (LLM is one signal among measured ones)
+
+The credibility story: the LLM judge no longer decides quality alone. Each
+iteration's score is a weighted blend of the judge's `overall` and measured
+objective sub-scores, with **defaults** `weight_llm=0.5`, `weight_tests=0.2`,
+`weight_coverage=0.1`, `weight_complexity=0.1`, `weight_scope=0.1`. Signals
+whose tooling is absent (e.g. no `coverage`/`radon` installed) **drop out and
+the remaining weights renormalize** — never crashing. The raw LLM score and
+every objective signal are kept in `averyloop_log.json` so each blend is
+auditable.
+
+### Deterministic safety gate
+
+Before any merge, `safety_gate.py` runs code-level (non-LLM) checks and vetoes
+the merge — regardless of the judge's verdict — on: out-of-scope / read-only
+writes, removal of test assertions, credential-like patterns, and edits to the
+loop's own safety code. It is defense-in-depth: it runs *in addition to* the
+judge-emitted critical flags and cannot be prompt-injected away.
 
 ## Adapting to Your Project
 
@@ -401,10 +467,13 @@ averyloop/
 ├── __init__.py
 ├── project_config.py      # Project-specific YAML config loader
 ├── loop_config.py          # Loop tuning JSON config loader
-├── evaluator.py            # Judge scoring + exit logic + Finding model
+├── evaluator.py            # Judge scoring + composite blend + exit logic + Finding model
+├── convergence.py          # Authored, non-LLM stop detection (plateau/decay/floor)
+├── signals.py              # Pure objective sub-scores (tests/coverage/complexity/scope)
+├── safety_gate.py          # Deterministic, non-LLM merge veto
 ├── git_utils.py            # Git operations + test runners
 ├── loop_tracker.py         # Iteration logging + context generation
-├── orchestrator_v2.py      # Main loop: audit → fix → test → merge
+├── orchestrator_v2.py      # Main loop: audit → fix → test → safety gate → merge
 ├── agents/
 │   ├── _api.py             # Shared API client + retry logic
 │   ├── auditor.py          # Audit prompt + source file collection
