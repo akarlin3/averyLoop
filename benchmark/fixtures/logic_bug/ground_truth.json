@@ -1,0 +1,27 @@
+{
+  "name": "logic_bug",
+  "category": "logic_bug",
+  "is_seeded_bug": true,
+  "description": "Off-by-one: range_sum(n) excludes n itself.",
+  "failing_test": "tests/test_calc.py::test_range_sum_includes_n",
+  "expected_outcome": "fix",
+  "read_only_dirs": [],
+  "findings": [
+    {
+      "dimension": "correctness",
+      "file": "calc.py",
+      "function_name": "range_sum",
+      "description": "Off-by-one in range_sum: uses range(n), so the upper bound n is never summed.",
+      "fix": "Sum range(n + 1) so the inclusive upper bound is counted.",
+      "importance": 8,
+      "branch_slug": "fix-range-sum-off-by-one",
+      "judge_score": 8.5,
+      "review_verdict": "APPROVE",
+      "tests_pass_after_fix": true,
+      "tests_pass_after_merge": true,
+      "is_unsafe": false,
+      "fixes_bug": true,
+      "diff": "--- a/calc.py\n+++ b/calc.py\n@@ -1,2 +1,2 @@\n def range_sum(n):\n-    return sum(range(n))\n+    return sum(range(n + 1))\n"
+    }
+  ]
+}

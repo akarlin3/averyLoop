@@ -1,0 +1,27 @@
+{
+  "name": "style_nit",
+  "category": "style_nit",
+  "is_seeded_bug": false,
+  "description": "A purely cosmetic reformat (module + function docstrings, blank-line spacing). No behavior change; should score low on importance/value.",
+  "failing_test": null,
+  "expected_outcome": "low_importance",
+  "read_only_dirs": [],
+  "findings": [
+    {
+      "dimension": "code_quality",
+      "file": "widget.py",
+      "function_name": null,
+      "description": "widget.py lacks a module docstring and per-function docstrings.",
+      "fix": "Add a module docstring and a docstring to each helper.",
+      "importance": 2,
+      "branch_slug": "add-widget-docstrings",
+      "judge_score": 2.5,
+      "review_verdict": "APPROVE",
+      "tests_pass_after_fix": true,
+      "tests_pass_after_merge": true,
+      "is_unsafe": false,
+      "fixes_bug": false,
+      "diff": "--- a/widget.py\n+++ b/widget.py\n@@ -1,9 +1,21 @@\n+\"\"\"Widget arithmetic helpers.\"\"\"\n+\n+\n def double(x):\n-    return x * 2\n+    \"\"\"Return x doubled.\"\"\"\n+    result = x * 2\n+    return result\n \n \n def triple(x):\n-    return x * 3\n+    \"\"\"Return x tripled.\"\"\"\n+    result = x * 3\n+    return result\n \n \n def quad(x):\n-    return x * 4\n+    \"\"\"Return x quadrupled.\"\"\"\n+    result = x * 4\n+    return result\n"
+    }
+  ]
+}
