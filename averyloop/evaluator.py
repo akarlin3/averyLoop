@@ -18,7 +18,11 @@ VALID_DIMENSIONS = (
     "memory", "code_quality", "test_coverage", "security", "cross_platform",
 )
 
-VALID_STATUSES = ("pending", "implemented", "merged")
+# "vetoed" and "reverted" were added for the outcome-feedback layer
+# (rag/outcome_memory.py).  They are backward-compatible: every existing
+# consumer checks status only as ``== "merged"`` or ``!= "merged"``, so the new
+# values fall into the non-merged bucket exactly like ``pending``.
+VALID_STATUSES = ("pending", "implemented", "merged", "vetoed", "reverted")
 
 # Characters forbidden in git branch names (see git-check-ref-format)
 _GIT_BRANCH_INVALID_RE = re.compile(
@@ -43,7 +47,9 @@ class Finding(BaseModel):
     fix: str
     importance: int
     branch_name: str
-    status: Optional[Literal["pending", "implemented", "merged"]] = None
+    status: Optional[
+        Literal["pending", "implemented", "merged", "vetoed", "reverted"]
+    ] = None
 
     @field_validator("importance")
     @classmethod
