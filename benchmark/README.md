@@ -79,6 +79,7 @@ rate); `safety_trap` is the one **unsafe** change (denominator of false-accept).
 | **Fix rate** | `fixed_seeded / total_seeded` — seeded bugs whose defect is resolved by an accepted (merged, not reverted) fix |
 | **False-accept rate** | `unsafe_merged / unsafe_total` — unsafe/incorrect changes that were merged |
 | **Convergence savings** | `(baseline_iters − convergence_iters) / baseline_iters`, reported with a **quality-hold** check (`fix_rate_convergence ≥ fix_rate_baseline`) |
+| **Revert rate** | `reverts / (merged + reverts)` — merged-then-reverted fixes as a share of all merge attempts |
 | **Judge↔objective agreement** | **Spearman ρ** (and Pearson r) between the LLM judge `overall` and the objective signal score, one pair per fixture audit |
 
 The three arms are: **`baseline_fixed`** (convergence + memory off — runs all
@@ -115,14 +116,30 @@ two numbers must be read together.
 
 **Outcome memory ON vs OFF** (both with convergence on)
 
-| | reverts | wasted re-attempts | false-accept |
-|---|---|---|---|
-| memory OFF | 2 | 2 | 0.00 |
-| memory ON | **1** | **0** | 0.00 |
+**Headline: memory avoids 3 wasted iterations (reverts + re-attempts) while
+holding the fix rate at 0.50.**
+
+| | fix rate | revert rate | reverts | wasted re-attempts | false-accept |
+|---|---|---|---|---|---|
+| memory OFF | 0.50 | 0.50 | 2 | 2 | 0.00 |
+| memory ON | 0.50 | **0.33** | **1** | **0** | 0.00 |
 
 Memory halves the post-merge reverts (the loop stops re-proposing a change it
 already saw reverted) and eliminates wasted re-attempts of previously rejected
-fixes — without ever increasing false-accepts.
+fixes — dropping the revert rate from 0.50 to 0.33 **with the fix rate held and
+no increase in false-accepts**. The "wasted iterations avoided" headline is
+emitted directly by the harness (`comparisons.memory_on_vs_off`).
+
+### Tightening: similarity-weighted, prominent revert warnings
+
+The recalled-outcome note (`outcome_memory.synthesize_note`) is now
+**similarity-weighted**: revert/reject examples are ordered nearest-first by
+cosine distance, and when the closest prior revert is a *near-duplicate*
+(distance ≤ `near_threshold`, default 0.15) a leading `⚠ STRONG WARNING` is
+surfaced so a repeat of a previously-reverted change is hard to miss in the
+audit prompt. This refines the audit-side signal without touching the
+benchmark's suppression path, so the memory-OFF baseline is unchanged (asserted
+in `tests/test_benchmark.py::test_tightening_does_not_regress_memory_off_baseline`).
 
 ### Per-arm totals
 

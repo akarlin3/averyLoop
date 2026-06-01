@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Adaptive convergence** (`convergence.py`): an opt-in
+  `convergence_adaptive` mode scales the plateau epsilon to the run's own
+  improvement magnitudes (`max(convergence_adaptive_floor,
+  convergence_adaptive_coef × mean(|improvement|))`) instead of a fixed absolute
+  delta. A fixed `convergence_epsilon=0.25` mis-calls a slow-but-steady run
+  (+0.1/iter) as a plateau and stops early; adaptive recognizes that rate as
+  real progress and keeps going, while still stopping a run that jumped then
+  flattened. Pure and deterministic given history; falls back to the fixed
+  epsilon when off. `evaluate_convergence`'s signature and return type are
+  unchanged.
+
+- **Multi-repo orchestration** (`averyloop/multi.py`, `repos.yaml`, the
+  `averyloop --repos` flag, and an `averyloop-multi` entry point): one
+  invocation sweeps N repositories sequentially, each with its own config,
+  project config, iteration log, and outcome-memory store, then prints a
+  cross-repo summary (iterations, fixes merged, convergence reason, time). A
+  `repo_session` context manager rebinds the cwd, git root
+  (`git_utils.set_repo_root`), log path (`loop_tracker.set_log_path`), and the
+  loop/project config caches per repo, and the orchestrator now reads the active
+  repo root dynamically, so two repos in one process can't cross-contaminate
+  logs or outcome stores (asserted by tests). A failing repo is recorded and the
+  sweep continues.
+
+- **Live dashboard + structured event stream** (`averyloop/events.py`): the
+  orchestrator's high-level lifecycle (run / iteration / phase / scores /
+  convergence and the multi-repo queue) is now a single event source consumed by
+  two renderers — a live `rich` TUI (repo queue, current iteration/phase, latest
+  LLM + composite scores, convergence status) and a plain-text renderer that
+  reproduces the prior stdout. Selection is automatic: rich on a TTY when
+  available and `AVERYLOOP_NO_TUI` is unset, plain otherwise, so piped/CI runs
+  stay plain text. Adds `rich` as a dependency.
+
+- **Outcome-memory A/B headline + tightening**: the benchmark's memory-on-vs-off
+  comparison now reports fix-rate, revert-rate, and a wasted-iterations-avoided
+  headline with a fix-rate-held check (memory avoids 3 wasted iterations,
+  revert rate 0.50→0.33, fix rate held at 0.50; see `benchmark/README.md`).
+  `outcome_memory.synthesize_note` is now similarity-weighted: revert/reject
+  examples are ordered nearest-first by cosine distance, and a near-duplicate
+  prior revert raises a prominent leading `⚠ STRONG WARNING` in the audit prompt.
+
 - **Outcome-feedback RAG** (`outcomes.py` + `rag/outcome_memory.py`): The loop now
   learns within a project. `outcomes.py` derives a typed outcome —
   `accepted` / `rejected` / `reverted` — for each implemented finding from existing

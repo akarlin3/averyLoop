@@ -20,6 +20,9 @@ class FakeCfg:
     convergence_epsilon: float = 0.25
     convergence_patience: int = 2
     min_iterations: int = 2
+    convergence_adaptive: bool = False
+    convergence_adaptive_coef: float = 0.5
+    convergence_adaptive_floor: float = 0.01
 
 
 def _entry(score, merged=0):
@@ -138,3 +141,68 @@ def test_missing_metric_does_not_crash():
     decision = evaluate_convergence(history, cfg)
     assert isinstance(decision, ConvergenceDecision)
     assert decision.stop is False
+
+
+# ── Adaptive convergence ─────────────────────────────────────────────────────
+
+# The crafted case: a repo that improves slowly but *steadily* (+0.1/iter).
+# Fixed epsilon=0.25 calls this a plateau and stops too early; adaptive epsilon
+# recognizes +0.1 as this repo's real rate of progress and keeps going.
+_SLOW_STEADY = [4.0, 4.1, 4.2, 4.3, 4.4]
+
+# A repo that jumps early then flattens — both modes should stop here.
+_FAST_THEN_FLAT = [5.0, 9.0, 9.02, 9.03]
+
+
+def test_fixed_misjudges_slow_but_improving_run():
+    """Baseline: fixed thresholds stop a still-improving slow run (the bug)."""
+    cfg = FakeCfg(convergence_epsilon=0.25, convergence_patience=2,
+                  convergence_adaptive=False)
+    history = [_entry(s, merged=1) for s in _SLOW_STEADY]
+    decision = evaluate_convergence(history, cfg)
+    assert decision.stop is True  # fixed mis-calls this as a plateau
+    assert "plateau" in decision.reason
+
+
+def test_adaptive_keeps_going_on_slow_but_improving_run():
+    """Adaptive mode beats fixed: same history, correctly keeps going."""
+    cfg = FakeCfg(convergence_epsilon=0.25, convergence_patience=2,
+                  convergence_adaptive=True)
+    history = [_entry(s, merged=1) for s in _SLOW_STEADY]
+    decision = evaluate_convergence(history, cfg)
+    assert decision.stop is False
+    # eps scaled to the ~0.1 movement scale, well below the fixed 0.25.
+    assert decision.signal_values["epsilon_effective"] < 0.25
+    assert decision.signal_values["adaptive"] is True
+
+
+def test_adaptive_stops_on_fast_converging_run():
+    """Adaptive mode still stops when the run has genuinely flattened."""
+    cfg = FakeCfg(convergence_epsilon=0.25, convergence_patience=2,
+                  convergence_adaptive=True)
+    history = [_entry(s, merged=1) for s in _FAST_THEN_FLAT]
+    decision = evaluate_convergence(history, cfg)
+    assert decision.stop is True
+    assert "plateau" in decision.reason
+    # The early +4.0 jump sets a large scale, so the ~0.02 recent steps
+    # fall far below the adaptive epsilon.
+    assert decision.signal_values["epsilon_effective"] > 0.25
+
+
+def test_adaptive_floor_keeps_flat_run_stoppable():
+    """A perfectly flat run has scale 0; the floor keeps it stoppable."""
+    cfg = FakeCfg(convergence_epsilon=0.25, convergence_patience=2,
+                  convergence_adaptive=True, convergence_adaptive_floor=0.01)
+    history = [_entry(8.0, merged=1) for _ in range(4)]
+    decision = evaluate_convergence(history, cfg)
+    assert decision.stop is True
+    assert decision.signal_values["epsilon_effective"] == pytest.approx(0.01)
+
+
+def test_adaptive_epsilon_is_deterministic():
+    """Same history → identical effective epsilon (pure function)."""
+    cfg = FakeCfg(convergence_adaptive=True)
+    history = [_entry(s, merged=1) for s in _FAST_THEN_FLAT]
+    a = evaluate_convergence(history, cfg).signal_values["epsilon_effective"]
+    b = evaluate_convergence(history, cfg).signal_values["epsilon_effective"]
+    assert a == b

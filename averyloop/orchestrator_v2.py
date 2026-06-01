@@ -22,6 +22,7 @@ from typing import List, Optional
 
 from averyloop import loop_tracker
 from averyloop import git_utils
+from averyloop import events
 from averyloop import signals as _signals
 from averyloop.convergence import evaluate_convergence
 from averyloop.safety_gate import evaluate_safety
@@ -36,7 +37,13 @@ from averyloop.project_config import get_project_config
 # Repo root is the current working directory (the target project).
 # This was previously __file__-relative, which broke when the package
 # was installed via pip into site-packages.
-REPO_ROOT = os.getcwd()
+#
+# The active repo root is owned by ``git_utils`` (rebound per-repo by the
+# multi-repo runner). ``_repo_root()`` reads it dynamically so audit context,
+# fixes, git diffs, and the outcome store all target the repository currently
+# being processed instead of a value frozen at import time.
+def _repo_root() -> str:
+    return str(git_utils.REPO_ROOT)
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +113,7 @@ def _get_diff(branch: str, base: str) -> str:
     """Return the git diff between *base* and *branch*."""
     result = subprocess.run(
         ["git", "diff", f"{base}...{branch}"],
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, check=False, cwd=_repo_root(),
     )
     return result.stdout
 
@@ -134,7 +141,7 @@ def _maybe_inject_outcome_note(context: str, state: IterationState) -> str:
             [pcfg.description or "", context, *(pcfg.key_files or [])]
         )
         note = outcome_memory.recall_note(
-            query, repo_root=REPO_ROOT, k=getattr(cfg, "outcome_recall_k", 5)
+            query, repo_root=_repo_root(), k=getattr(cfg, "outcome_recall_k", 5)
         )
         if note:
             print("       Outcome memory: recalled prior outcomes for similar code")
@@ -193,7 +200,7 @@ def _phase_record_outcomes(state: IterationState) -> None:
                     merge_sha=fs.merge_sha,
                 )
             )
-        if records and outcome_memory.record_outcomes(records, repo_root=REPO_ROOT):
+        if records and outcome_memory.record_outcomes(records, repo_root=_repo_root()):
             print(f"       Outcome memory: recorded {len(records)} outcome(s)")
     except Exception as e:
         print(f"       Outcome memory record skipped: {e}")
@@ -209,7 +216,7 @@ def _run_audit(iteration: int, context: str, dry_run: bool) -> str:
         return f"[dry-run] audit output for iteration {iteration}"
 
     cfg = _get_loop_config()
-    source_context = collect_source_files(REPO_ROOT, max_file_chars=cfg.max_file_chars)
+    source_context = collect_source_files(_repo_root(), max_file_chars=cfg.max_file_chars)
     user_message = (
         f"## Iteration context\n{context}\n\n"
         f"## Source files\n{source_context}\n\n"
@@ -305,16 +312,18 @@ def _parse_findings(audit_output: str, dry_run: bool) -> List[Finding]:
 
 def _phase_audit(state: IterationState) -> None:
     """Phase 1: audit the codebase and parse findings."""
-    print(f"\n[1/5] Gathering context from prior iterations...")
+    events.emit("phase", iteration=state.iteration, n=1,
+                name="Gathering context from prior iterations")
     context = loop_tracker.get_context_for_next_iteration()
     context = _maybe_inject_outcome_note(context, state)
 
-    print(f"[2/5] Running code audit via Claude API...")
+    events.emit("phase", iteration=state.iteration, n=2,
+                name="Running code audit via Claude API")
     state.audit_output = _run_audit(state.iteration, context, state.dry_run)
     print(f"       Audit response: {len(state.audit_output)} chars")
 
     findings = _parse_findings(state.audit_output, state.dry_run)
-    print(f"       Found {len(findings)} valid finding(s)")
+    events.emit("findings", iteration=state.iteration, count=len(findings))
     for j, f in enumerate(findings, 1):
         print(f"       {j}. [{f.dimension}] {f.description[:80]}"
               f" (importance={f.importance})")
@@ -331,7 +340,7 @@ def _phase_implement(state: IterationState) -> None:
     if state.dry_run or not state.finding_states:
         return
 
-    print(f"\n[3/5] Implementing fixes...")
+    events.emit("phase", iteration=state.iteration, n=3, name="Implementing fixes")
     state.original_branch = git_utils.current_branch()
 
     for fs in state.finding_states:
@@ -347,7 +356,7 @@ def _phase_implement(state: IterationState) -> None:
                 continue
 
             git_utils.create_branch(finding.branch_name, base=state.original_branch)
-            apply_fix(finding, repo_root=REPO_ROOT)
+            apply_fix(finding, repo_root=_repo_root())
             git_utils.commit_all(
                 f"improvement: {finding.dimension} — {finding.description[:60]}"
             )
@@ -385,7 +394,7 @@ def _phase_review(state: IterationState) -> None:
     if state.dry_run or not state.finding_states:
         return
 
-    print(f"\n[4/5] Reviewing patches...")
+    events.emit("phase", iteration=state.iteration, n=4, name="Reviewing patches")
     critical_flags = _get_critical_flags()
 
     for fs in state.finding_states:
@@ -396,7 +405,7 @@ def _phase_review(state: IterationState) -> None:
         print(f"\n--- Reviewing: {finding.branch_name} ---")
 
         try:
-            result = _review(finding, diff=fs.diff, repo_root=REPO_ROOT)
+            result = _review(finding, diff=fs.diff, repo_root=_repo_root())
             fs.review_detail = result
             verdict = result.get("verdict", "REQUEST_CHANGES")
             fs.review_verdict = verdict
@@ -447,7 +456,8 @@ def _phase_test_and_merge(state: IterationState) -> None:
     if state.dry_run or not state.finding_states:
         return
 
-    print(f"\n[5/5] Testing and merging approved patches...")
+    events.emit("phase", iteration=state.iteration, n=5,
+                name="Testing and merging approved patches")
 
     for fs in state.finding_states:
         finding = fs.finding
@@ -533,7 +543,7 @@ def _phase_test_and_merge(state: IterationState) -> None:
             pre_merge_sha = subprocess.run(
                 ["git", "rev-parse", "HEAD"],
                 capture_output=True, text=True, check=False,
-                cwd=REPO_ROOT,
+                cwd=_repo_root(),
             ).stdout.strip()
             try:
                 git_utils.merge_branch(
@@ -545,7 +555,7 @@ def _phase_test_and_merge(state: IterationState) -> None:
                 fs.merge_sha = subprocess.run(
                     ["git", "rev-parse", "HEAD"],
                     capture_output=True, text=True, check=False,
-                    cwd=REPO_ROOT,
+                    cwd=_repo_root(),
                 ).stdout.strip()
                 print(f"    Merged: {finding.branch_name}")
 
@@ -561,7 +571,7 @@ def _phase_test_and_merge(state: IterationState) -> None:
                     subprocess.run(
                         ["git", "reset", "--hard", pre_merge_sha],
                         capture_output=True, check=False,
-                        cwd=REPO_ROOT,
+                        cwd=_repo_root(),
                     )
                     # Merged then immediately undone — a 'reverted' outcome.
                     finding.status = "reverted"
@@ -650,53 +660,64 @@ def run_loop(max_iterations: int = 10, dry_run: bool = False) -> list:
     pcfg = get_project_config()
     project_name = pcfg.name or "project"
     mode = "DRY RUN" if dry_run else "LIVE"
-    print(f"\n{'='*60}")
-    print(f"  Improvement Loop [{project_name}] — {mode} (max {max_iterations} iterations)")
-    print(f"{'='*60}\n")
 
     cfg = _get_loop_config()
     entries: list = []
 
-    # max_iterations stays the hard ceiling; convergence may stop us earlier.
-    for i in range(1, max_iterations + 1):
-        print(f"\n{'─'*60}")
-        print(f"  ITERATION {i}/{max_iterations}")
-        print(f"{'─'*60}")
+    # One event source feeds both the plain-stdout and the live dashboard
+    # renderers (see events.py). ensure_emitter reuses an outer emitter when a
+    # multi-repo sweep already owns one, so we never nest two live displays.
+    with events.ensure_emitter():
+        events.emit("run_start", project=project_name, mode=mode,
+                    max_iterations=max_iterations)
 
-        state = IterationState(iteration=i, dry_run=dry_run)
+        # max_iterations stays the hard ceiling; convergence may stop us earlier.
+        for i in range(1, max_iterations + 1):
+            events.emit("iteration_start", iteration=i,
+                        max_iterations=max_iterations)
 
-        # Phase 1: Audit
-        _phase_audit(state)
+            state = IterationState(iteration=i, dry_run=dry_run)
 
-        # Phase 2: Implement
-        _phase_implement(state)
+            # Phase 1: Audit
+            _phase_audit(state)
 
-        # Phase 3: Review
-        _phase_review(state)
+            # Phase 2: Implement
+            _phase_implement(state)
 
-        # Phase 4: Test and merge
-        _phase_test_and_merge(state)
+            # Phase 3: Review
+            _phase_review(state)
 
-        # Record fix outcomes (accept/reject/revert) into the outcome memory.
-        _phase_record_outcomes(state)
+            # Phase 4: Test and merge
+            _phase_test_and_merge(state)
 
-        # Phase 5: Log
-        entry = _phase_log(state)
-        entries.append(entry)
+            # Record fix outcomes (accept/reject/revert) into the outcome memory.
+            _phase_record_outcomes(state)
 
-        if entry["exit_condition_met"]:
-            print(f"\n  Loop complete after {i} iteration(s).")
-            break
+            # Phase 5: Log
+            entry = _phase_log(state)
+            entries.append(entry)
 
-        # Authored convergence / diminishing-returns detection (non-LLM).
-        # Skipped in dry-run, where there is no real signal to converge on.
-        if not dry_run and getattr(cfg, "convergence_enabled", True):
-            decision = evaluate_convergence(loop_tracker.load_log(), cfg)
-            if decision.stop:
-                print(f"\n  Convergence detected after {i} iteration(s): "
-                      f"{decision.reason}")
-                print(f"  Signal values: {decision.signal_values}")
+            _scores = entry.get("audit_scores", {}) or {}
+            events.emit("iteration_end", iteration=i,
+                        overall=_scores.get("overall"),
+                        composite=_scores.get("composite"),
+                        tests_passed=entry.get("tests_passed"),
+                        exit=entry.get("exit_condition_met"))
+
+            if entry["exit_condition_met"]:
+                events.emit("convergence", iteration=i, stop=True,
+                            reason="exit condition met — all findings below threshold")
                 break
+
+            # Authored convergence / diminishing-returns detection (non-LLM).
+            # Skipped in dry-run, where there is no real signal to converge on.
+            if not dry_run and getattr(cfg, "convergence_enabled", True):
+                decision = evaluate_convergence(loop_tracker.load_log(), cfg)
+                if decision.stop:
+                    events.emit("convergence", iteration=i, stop=True,
+                                reason=decision.reason)
+                    break
+        events.emit("run_end", iterations=len(entries))
 
     _print_run_summary(entries)
     return entries
@@ -770,7 +791,21 @@ def main():
                         help="Maximum number of audit/fix cycles (default: 10)")
     parser.add_argument("--single-iteration", action="store_true",
                         help="Run exactly one iteration (shorthand for --max-iterations 1)")
+    parser.add_argument("--repos", type=str, default=None,
+                        help="Path to a repos.yaml manifest; sweep multiple repos "
+                             "instead of the current directory")
     args = parser.parse_args()
+
+    # Multi-repo sweep: delegate to the dedicated runner so each repo gets its
+    # own config, log, and outcome store (see averyloop/multi.py).
+    if args.repos:
+        from averyloop import multi
+        raise SystemExit(multi.main(
+            ["--repos", args.repos]
+            + (["--dry-run"] if args.dry_run else [])
+            + (["--max-iterations", str(args.max_iterations)]
+               if not args.single_iteration else ["--max-iterations", "1"])
+        ))
 
     max_iter = 1 if args.single_iteration else args.max_iterations
     run_loop(max_iterations=max_iter, dry_run=args.dry_run)

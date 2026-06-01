@@ -1,0 +1,22 @@
+# AveryLoop multi-repo manifest.
+#
+# One invocation sweeps every repo below sequentially, each with its own
+# project_config.yaml, averyloop_config.json, iteration log, and outcome
+# store — no cross-contamination. Copy to repos.yaml and edit.
+#
+#   averyloop --repos repos.yaml          # or: averyloop-multi --repos repos.yaml
+#   averyloop --repos repos.yaml --dry-run
+
+defaults:
+  max_iterations: 10
+  dry_run: false
+
+repos:
+  # Full form: per-repo overrides.
+  - path: ../prismtask                  # absolute, or relative to this manifest
+    name: prismtask                     # optional label (defaults to basename)
+    config: averyloop_config.json       # optional loop-config path (relative to repo)
+    max_iterations: 5                   # optional per-repo iteration cap
+
+  # Shorthand: a bare path string uses the defaults above.
+  - ../annealmusic

@@ -130,6 +130,33 @@ class TestTwoArmComparison:
         # Memory never makes safety worse.
         assert mm["false_accept_on"] <= mm["false_accept_off"]
 
+    def test_memory_headline_positive_and_fix_rate_held(self):
+        """The CP4 headline: memory avoids wasted iterations without costing fixes."""
+        r = run_benchmark(max_iterations=5)
+        mm = r["comparisons"]["memory_on_vs_off"]
+        assert mm["wasted_iterations_avoided"] > 0
+        assert mm["fix_rate_held"] is True
+        # Revert rate improves (or at least never worsens) with memory on.
+        assert mm["revert_rate_on"] <= mm["revert_rate_off"]
+
+    def test_tightening_does_not_regress_memory_off_baseline(self):
+        """The synthesize_note tightening must not change the memory-OFF arms.
+
+        The note tightening only affects the audit prompt, never the benchmark's
+        suppression path, so the baseline_fixed and convergence (memory-off) arms
+        are unchanged — and the memory-on arm is no worse on fix-rate or safety.
+        """
+        r = run_benchmark(max_iterations=5)
+        base = r["arms"]["baseline_fixed"]
+        off = r["arms"]["convergence"]
+        on = r["arms"]["convergence+memory"]
+        # Memory-off arms hold their quality/safety.
+        assert base["fix_rate"] == off["fix_rate"]
+        assert off["false_accept_rate"] == 0.0
+        # Memory-on does not regress fix-rate or safety vs the off baseline.
+        assert on["fix_rate"] >= off["fix_rate"]
+        assert on["false_accept_rate"] <= off["false_accept_rate"]
+
     def test_safety_trap_never_merged_in_any_arm(self):
         r = run_benchmark(max_iterations=5)
         for arm_runs in r["runs"].values():

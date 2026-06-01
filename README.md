@@ -116,7 +116,44 @@ averyloop
 
 # 6. Dry run (no API calls, no code changes — validates setup)
 averyloop --dry-run
+
+# 7. Sweep multiple repos in one invocation (see Multi-repo below)
+averyloop --repos repos.yaml
 ```
+
+While a run executes, AveryLoop shows a **live dashboard** (current repo,
+iteration, phase, latest LLM + composite scores, convergence status, and the
+repo queue for multi-repo sweeps) when stdout is a terminal. Piped/CI runs (or
+`AVERYLOOP_NO_TUI=1`) automatically fall back to the same information as plain
+text, so nothing about non-interactive output changes.
+
+## Multi-repo sweeps
+
+One invocation can process several repos sequentially, each with its **own**
+`project_config.yaml`, `averyloop_config.json`, iteration log, and outcome-memory
+store — with no cross-contamination between them. Describe the repos in a
+`repos.yaml` manifest (copy `repos.example.yaml`):
+
+```yaml
+defaults:
+  max_iterations: 10
+  dry_run: false
+repos:
+  - path: ../prismtask                # absolute, or relative to the manifest
+    name: prismtask                   # optional label (defaults to the basename)
+    config: averyloop_config.json     # optional loop-config path (relative to repo)
+    max_iterations: 5                 # optional per-repo cap
+  - ../annealmusic                    # shorthand: a bare path uses the defaults
+```
+
+```bash
+averyloop --repos repos.yaml            # or: averyloop-multi --repos repos.yaml
+averyloop --repos repos.yaml --dry-run
+```
+
+A cross-repo summary table (per repo: iterations, fixes merged, convergence
+reason, time) is printed at the end. A failure in one repo is recorded and the
+sweep continues with the next.
 
 ## Example run
 
@@ -263,6 +300,9 @@ Controls API models, token limits, exit strategy, and diminishing returns thresh
 | `convergence_epsilon` | `0.25` | Min score gain that counts as progress |
 | `convergence_patience` | `2` | Consecutive stalled iterations → plateau |
 | `min_iterations` | `2` | Floor: never stop before this iteration |
+| `convergence_adaptive` | `false` | Scale the plateau epsilon to the run's own improvement distribution (see below) |
+| `convergence_adaptive_coef` | `0.5` | Adaptive epsilon = `coef × mean(\|improvement\|)` |
+| `convergence_adaptive_floor` | `0.01` | Lower bound so a flat run stays stoppable |
 | `weight_llm` | `0.5` | Composite weight of the LLM judge score |
 | `weight_tests` | `0.2` | Composite weight of the test signal |
 | `weight_coverage` | `0.1` | Composite weight of the coverage-delta signal |
@@ -341,6 +381,16 @@ The loop stops when one of these is met (bounded always by `max_iterations`):
    `convergence_patience` consecutive iterations — a score *drop* counts as a
    stall too) or **decay** (no fixes accepted for `convergence_patience`
    iterations). The stop reason and signal values are logged.
+
+   **Adaptive epsilon** (`convergence_adaptive: true`): a fixed
+   `convergence_epsilon` is an absolute delta on a 0–10 score, so one value
+   tuned for a big repo mis-calls others — a repo improving in ~0.1 steps looks
+   "plateaued" at `0.25` and stops too early. With the flag on, the plateau
+   epsilon is instead scaled to the run's *own* improvement magnitudes
+   (`max(convergence_adaptive_floor, convergence_adaptive_coef × mean(|improvement|))`),
+   so steady small progress keeps the loop going while a run that jumped then
+   flattened still stops. The logic stays pure and deterministic, and falls back
+   to the fixed epsilon when the flag is off.
 2. **Classic**: No findings above the importance threshold AND audit coverage
    is sufficient AND no critical flags.
 3. **Diminishing returns** (legacy detector): over the last N iterations, merge
@@ -507,7 +557,9 @@ averyloop/
 ├── outcomes.py             # Pure outcome derivation (accept/reject/revert) + revert detection
 ├── git_utils.py            # Git operations + test runners
 ├── loop_tracker.py         # Iteration logging + context generation
+├── events.py               # Structured progress events → live rich dashboard / plain stdout
 ├── orchestrator_v2.py      # Main loop: audit → fix → test → safety gate → merge
+├── multi.py                # Multi-repo sweep: per-repo isolation + cross-repo summary
 ├── agents/
 │   ├── _api.py             # Shared API client + retry logic
 │   ├── auditor.py          # Audit prompt + source file collection

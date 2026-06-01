@@ -306,12 +306,23 @@ def _build_comparisons(arms: dict) -> dict:
             "quality_held": conv["fix_rate"] >= base["fix_rate"],
         },
         "memory_on_vs_off": {
+            "fix_rate_off": conv["fix_rate"],
+            "fix_rate_on": mem["fix_rate"],
+            "revert_rate_off": conv["revert_rate"],
+            "revert_rate_on": mem["revert_rate"],
             "reverts_off": conv["reverts"],
             "reverts_on": mem["reverts"],
             "wasted_reattempts_off": conv["wasted_reattempts"],
             "wasted_reattempts_on": mem["wasted_reattempts"],
             "false_accept_off": conv["false_accept_rate"],
             "false_accept_on": mem["false_accept_rate"],
+            # Headline: wasted iterations (reverts + re-attempts) avoided by
+            # memory, with the fix-rate held (memory must not cost fixes).
+            "wasted_iterations_avoided": (
+                (conv["reverts"] + conv["wasted_reattempts"])
+                - (mem["reverts"] + mem["wasted_reattempts"])
+            ),
+            "fix_rate_held": mem["fix_rate"] >= conv["fix_rate"],
         },
     }
 
@@ -352,7 +363,13 @@ def format_table(results: dict) -> str:
 
     mm = cmp["memory_on_vs_off"]
     lines.append("")
-    lines.append("Outcome memory ON vs OFF:")
+    lines.append("Outcome memory ON vs OFF (headline: "
+                 f"{mm['wasted_iterations_avoided']} wasted iteration(s) avoided, "
+                 f"fix-rate {'held' if mm['fix_rate_held'] else 'DROPPED'}):")
+    lines.append(f"  fix rate ................. {mm['fix_rate_on']:.2f} vs "
+                 f"{mm['fix_rate_off']:.2f}")
+    lines.append(f"  revert rate .............. {mm['revert_rate_on']:.2f} vs "
+                 f"{mm['revert_rate_off']:.2f}")
     lines.append(f"  reverts .................. {mm['reverts_on']} vs {mm['reverts_off']}")
     lines.append(f"  wasted re-attempts ....... {mm['wasted_reattempts_on']} vs "
                  f"{mm['wasted_reattempts_off']}")
