@@ -40,6 +40,13 @@ class LoopConfig:
     convergence_epsilon: float = 0.25    # min score gain that counts as progress
     convergence_patience: int = 2        # k consecutive stalled iters → plateau
     min_iterations: int = 2              # floor: never stop before this iteration
+    # Adaptive convergence: when on, the plateau epsilon is scaled to the
+    # run's *own* observed improvement magnitudes instead of the fixed
+    # convergence_epsilon, so a threshold tuned for one repo doesn't stop too
+    # early on a small/slow repo or too late on a noisy one. See convergence.py.
+    convergence_adaptive: bool = False
+    convergence_adaptive_coef: float = 0.5   # eps = coef × mean|improvement|
+    convergence_adaptive_floor: float = 0.01  # never let adaptive eps reach 0
 
     # ── Composite-score blend weights (signals.py + evaluator blend) ─────
     # The LLM judge is one input among measured objective signals.  Weights
