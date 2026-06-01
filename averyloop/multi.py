@@ -52,6 +52,7 @@ from typing import Callable, List, Optional, Tuple
 
 import yaml
 
+from averyloop import events
 from averyloop import git_utils
 from averyloop import loop_tracker
 from averyloop.convergence import evaluate_convergence
@@ -200,23 +201,31 @@ def run_repos(
         from averyloop.orchestrator_v2 import run_loop as run_fn  # noqa: N806
 
     results: List[RepoResult] = []
-    for spec in specs:
-        result = RepoResult(name=spec.name, path=spec.path)
-        iters = spec.max_iterations or max_iterations
-        start = time.monotonic()
-        try:
-            with repo_session(spec.path, config_path=spec.config_path):
-                entries = run_fn(max_iterations=iters, dry_run=dry_run) or []
-                result.iterations = len(entries)
-                result.fixes_merged = sum(
-                    len(e.get("branches_merged", []) or []) for e in entries
-                )
-                result.convergence_reason = _stop_reason(entries, iters)
-        except Exception as e:  # one repo's failure must not abort the sweep
-            result.error = str(e)
-        finally:
-            result.elapsed_sec = round(time.monotonic() - start, 3)
-        results.append(result)
+    # One emitter owns the whole sweep so the dashboard shows the repo queue;
+    # each per-repo run_loop reuses it rather than starting its own display.
+    with events.ensure_emitter():
+        events.emit("sweep_start", repos=[s.name for s in specs], dry_run=dry_run)
+        for idx, spec in enumerate(specs, 1):
+            result = RepoResult(name=spec.name, path=spec.path)
+            iters = spec.max_iterations or max_iterations
+            events.emit("repo_start", name=spec.name, index=idx, total=len(specs))
+            start = time.monotonic()
+            try:
+                with repo_session(spec.path, config_path=spec.config_path):
+                    entries = run_fn(max_iterations=iters, dry_run=dry_run) or []
+                    result.iterations = len(entries)
+                    result.fixes_merged = sum(
+                        len(e.get("branches_merged", []) or []) for e in entries
+                    )
+                    result.convergence_reason = _stop_reason(entries, iters)
+            except Exception as e:  # one repo's failure must not abort the sweep
+                result.error = str(e)
+            finally:
+                result.elapsed_sec = round(time.monotonic() - start, 3)
+            events.emit("repo_end", name=spec.name, iterations=result.iterations,
+                        fixes_merged=result.fixes_merged,
+                        reason=result.error or result.convergence_reason)
+            results.append(result)
     return results
 
 
