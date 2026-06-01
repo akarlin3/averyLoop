@@ -159,3 +159,36 @@ class TestSynthesizeNote:
         ])
         assert "Rejected before merge" in note
         assert "safety-gate veto" in note
+
+    # ── Tightening: similarity weighting + prominent near-duplicate warning ──
+
+    def test_near_duplicate_revert_triggers_strong_warning(self):
+        note = om.synthesize_note([
+            {"label": REVERTED, "dimension": "correctness",
+             "reason": "broke a guard clause", "distance": 0.05},
+        ])
+        assert note.startswith("⚠ STRONG WARNING")
+        assert "broke a guard clause" in note
+
+    def test_far_revert_has_no_strong_warning_but_keeps_caution(self):
+        note = om.synthesize_note([
+            {"label": REVERTED, "dimension": "correctness",
+             "reason": "unrelated revert", "distance": 0.6},
+        ])
+        assert "STRONG WARNING" not in note
+        assert "caution" in note.lower()
+
+    def test_missing_distance_never_triggers_strong_warning(self):
+        # Hand-built notes (no distance) must behave like before.
+        note = om.synthesize_note([
+            {"label": REVERTED, "dimension": "correctness", "reason": "r"},
+        ])
+        assert "STRONG WARNING" not in note
+
+    def test_reverts_ordered_nearest_first(self):
+        note = om.synthesize_note([
+            {"label": REVERTED, "dimension": "d", "reason": "FAR", "distance": 0.9},
+            {"label": REVERTED, "dimension": "d", "reason": "NEAR", "distance": 0.4},
+        ], near_threshold=0.0)  # disable the strong-warning header
+        # The nearer revert is listed before the farther one.
+        assert note.index("NEAR") < note.index("FAR")

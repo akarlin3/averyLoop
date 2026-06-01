@@ -286,16 +286,36 @@ def recall_outcomes(
 # Note synthesis (pure)
 # ---------------------------------------------------------------------------
 
-def synthesize_note(recalled: Sequence[dict], max_examples: int = 3) -> str:
+def _hit_distance(hit: dict) -> float:
+    """Cosine distance of a recalled hit; missing/invalid → +inf (least similar)."""
+    d = hit.get("distance")
+    return float(d) if isinstance(d, (int, float)) else float("inf")
+
+
+def synthesize_note(
+    recalled: Sequence[dict],
+    max_examples: int = 3,
+    near_threshold: float = 0.15,
+) -> str:
     """Synthesize a short advisory note from *recalled* outcome dicts.
 
-    Pure — testable without a DB.  Returns ``""`` for an empty recall.  Example::
+    Pure — testable without a DB.  Returns ``""`` for an empty recall.
 
+    Tightening (CP4): the note is now **similarity-weighted**.  Revert/reject
+    examples are ordered nearest-first by cosine ``distance`` (the most similar
+    prior failures lead, since they are the most relevant), and when the closest
+    prior revert is a *near-duplicate* (distance ``<= near_threshold``) a
+    prominent ``⚠ STRONG WARNING`` is surfaced at the very top of the note so a
+    repeat of a previously-reverted change is hard to miss in the audit prompt.
+    Hits without a distance (e.g. hand-built notes) are treated as least similar
+    and never trigger the strong warning, so callers that omit distances are
+    unaffected.  Example::
+
+        ⚠ STRONG WARNING: a nearly identical change was REVERTED before ...
         Prior fixes to similar code: 2 accepted, 1 reverted, 0 rejected.
-        Reverts removed/undid:
+        Reverts removed/undid (most similar first):
           - [correctness] merged then reverted
-        Treat similar changes with extra caution; prefer the patterns that were
-        accepted and avoid those that were reverted.
+        Treat similar changes with extra caution ...
     """
     if not recalled:
         return ""
@@ -306,14 +326,34 @@ def synthesize_note(recalled: Sequence[dict], max_examples: int = 3) -> str:
         if label in counts:
             counts[label] += 1
 
-    lines = [
+    # Similarity weighting: nearest (most similar) prior failures lead.
+    reverts = sorted(
+        (r for r in recalled if r.get("label") == REVERTED), key=_hit_distance
+    )
+    rejects = sorted(
+        (r for r in recalled if r.get("label") == REJECTED), key=_hit_distance
+    )
+
+    lines: List[str] = []
+
+    # Prominent, similarity-gated warning for a near-duplicate revert.
+    if reverts and _hit_distance(reverts[0]) <= near_threshold:
+        top = reverts[0]
+        dim = top.get("dimension", "?")
+        reason = top.get("reason") or "reverted after merge"
+        lines.append(
+            f"⚠ STRONG WARNING: a nearly identical change was REVERTED before "
+            f"([{dim}] {reason}). Do not re-propose it without addressing why "
+            f"it failed."
+        )
+
+    lines.append(
         f"Prior fixes to similar code: {counts[ACCEPTED]} accepted, "
         f"{counts[REVERTED]} reverted, {counts[REJECTED]} rejected."
-    ]
+    )
 
-    reverts = [r for r in recalled if r.get("label") == REVERTED]
     if reverts:
-        lines.append("Reverts removed/undid:")
+        lines.append("Reverts removed/undid (most similar first):")
         for r in reverts[:max_examples]:
             dim = r.get("dimension", "?")
             reason = r.get("reason") or "reverted after merge"
@@ -321,9 +361,8 @@ def synthesize_note(recalled: Sequence[dict], max_examples: int = 3) -> str:
             detail = f" — {desc}" if desc else ""
             lines.append(f"  - [{dim}] {reason}{detail}")
 
-    rejects = [r for r in recalled if r.get("label") == REJECTED]
     if rejects:
-        lines.append("Rejected before merge:")
+        lines.append("Rejected before merge (most similar first):")
         for r in rejects[:max_examples]:
             dim = r.get("dimension", "?")
             reason = r.get("reason") or "rejected"

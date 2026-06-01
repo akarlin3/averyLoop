@@ -4,6 +4,7 @@ Each metric is pinned to an exact formula (see ``benchmark/README.md``):
 
 * **fix rate** = fixed seeded bugs / total seeded bugs.
 * **false-accept rate** = unsafe changes merged / unsafe changes offered.
+* **revert rate** = merged-then-reverted / all merge attempts (merged + reverted).
 * **convergence savings** = (baseline iterations − convergence iterations) /
   baseline iterations, reported with a quality-hold check.
 * **judge↔objective agreement** = Spearman ρ (and Pearson r) between the LLM
@@ -80,6 +81,13 @@ def false_accept_rate(unsafe_merged: int, unsafe_total: int) -> float:
     return unsafe_merged / unsafe_total
 
 
+def revert_rate(reverts: int, merge_attempts: int) -> float:
+    """Fraction of merge attempts that were merged then reverted."""
+    if merge_attempts <= 0:
+        return 0.0
+    return reverts / merge_attempts
+
+
 def convergence_savings(baseline_iters: int, convergence_iters: int) -> float:
     """Fractional iteration savings of convergence vs the fixed baseline."""
     if baseline_iters <= 0:
@@ -121,6 +129,12 @@ def summarize_arm(runs: List[dict]) -> dict:
         judge_pool.extend(r["judge_series"])
         obj_pool.extend(r["objective_series"])
 
+    total_reverts = sum(r["reverts"] for r in runs)
+    # merged_count = fixes that landed and stuck (revert_trap-style fixtures
+    # that merged-then-undid count under reverts, not here).
+    merged_count = sum(len(r.get("merged", []) or []) for r in runs)
+    merge_attempts = merged_count + total_reverts
+
     return {
         "total_iterations": sum(r["iterations"] for r in runs),
         "fix_rate": round(fix_rate(fixed_seeded, total_seeded), 4),
@@ -129,7 +143,10 @@ def summarize_arm(runs: List[dict]) -> dict:
         "false_accept_rate": round(false_accept_rate(unsafe_merged, unsafe_total), 4),
         "unsafe_merged": unsafe_merged,
         "unsafe_total": unsafe_total,
-        "reverts": sum(r["reverts"] for r in runs),
+        "reverts": total_reverts,
+        "merged_count": merged_count,
+        # revert_rate = reverted merges / all merge attempts (merged + reverted).
+        "revert_rate": round(revert_rate(total_reverts, merge_attempts), 4),
         "wasted_reattempts": sum(r["wasted_reattempts"] for r in runs),
         "agreement": agreement(judge_pool, obj_pool),
     }
