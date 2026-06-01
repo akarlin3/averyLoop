@@ -14,6 +14,22 @@ from averyloop.evaluator import (
 LOG_FILE = os.path.join(os.getcwd(), "averyloop_log.json")
 
 
+def set_log_path(path: str) -> None:
+    """Rebind the iteration-log path (used by the multi-repo runner).
+
+    The I/O helpers read ``LOG_FILE`` at call time, so reassigning it here (or
+    via ``monkeypatch``) redirects all subsequent reads/writes — this is how
+    each repo in a multi-repo sweep gets its own independent log.
+    """
+    global LOG_FILE
+    LOG_FILE = path
+
+
+def get_log_path() -> str:
+    """Return the currently bound iteration-log path."""
+    return LOG_FILE
+
+
 # ── I/O helpers ──────────────────────────────────────────────────────────────
 
 def load_log() -> list:

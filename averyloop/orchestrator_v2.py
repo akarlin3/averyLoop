@@ -36,7 +36,13 @@ from averyloop.project_config import get_project_config
 # Repo root is the current working directory (the target project).
 # This was previously __file__-relative, which broke when the package
 # was installed via pip into site-packages.
-REPO_ROOT = os.getcwd()
+#
+# The active repo root is owned by ``git_utils`` (rebound per-repo by the
+# multi-repo runner). ``_repo_root()`` reads it dynamically so audit context,
+# fixes, git diffs, and the outcome store all target the repository currently
+# being processed instead of a value frozen at import time.
+def _repo_root() -> str:
+    return str(git_utils.REPO_ROOT)
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +112,7 @@ def _get_diff(branch: str, base: str) -> str:
     """Return the git diff between *base* and *branch*."""
     result = subprocess.run(
         ["git", "diff", f"{base}...{branch}"],
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, check=False, cwd=_repo_root(),
     )
     return result.stdout
 
@@ -134,7 +140,7 @@ def _maybe_inject_outcome_note(context: str, state: IterationState) -> str:
             [pcfg.description or "", context, *(pcfg.key_files or [])]
         )
         note = outcome_memory.recall_note(
-            query, repo_root=REPO_ROOT, k=getattr(cfg, "outcome_recall_k", 5)
+            query, repo_root=_repo_root(), k=getattr(cfg, "outcome_recall_k", 5)
         )
         if note:
             print("       Outcome memory: recalled prior outcomes for similar code")
@@ -193,7 +199,7 @@ def _phase_record_outcomes(state: IterationState) -> None:
                     merge_sha=fs.merge_sha,
                 )
             )
-        if records and outcome_memory.record_outcomes(records, repo_root=REPO_ROOT):
+        if records and outcome_memory.record_outcomes(records, repo_root=_repo_root()):
             print(f"       Outcome memory: recorded {len(records)} outcome(s)")
     except Exception as e:
         print(f"       Outcome memory record skipped: {e}")
@@ -209,7 +215,7 @@ def _run_audit(iteration: int, context: str, dry_run: bool) -> str:
         return f"[dry-run] audit output for iteration {iteration}"
 
     cfg = _get_loop_config()
-    source_context = collect_source_files(REPO_ROOT, max_file_chars=cfg.max_file_chars)
+    source_context = collect_source_files(_repo_root(), max_file_chars=cfg.max_file_chars)
     user_message = (
         f"## Iteration context\n{context}\n\n"
         f"## Source files\n{source_context}\n\n"
@@ -347,7 +353,7 @@ def _phase_implement(state: IterationState) -> None:
                 continue
 
             git_utils.create_branch(finding.branch_name, base=state.original_branch)
-            apply_fix(finding, repo_root=REPO_ROOT)
+            apply_fix(finding, repo_root=_repo_root())
             git_utils.commit_all(
                 f"improvement: {finding.dimension} — {finding.description[:60]}"
             )
@@ -396,7 +402,7 @@ def _phase_review(state: IterationState) -> None:
         print(f"\n--- Reviewing: {finding.branch_name} ---")
 
         try:
-            result = _review(finding, diff=fs.diff, repo_root=REPO_ROOT)
+            result = _review(finding, diff=fs.diff, repo_root=_repo_root())
             fs.review_detail = result
             verdict = result.get("verdict", "REQUEST_CHANGES")
             fs.review_verdict = verdict
@@ -533,7 +539,7 @@ def _phase_test_and_merge(state: IterationState) -> None:
             pre_merge_sha = subprocess.run(
                 ["git", "rev-parse", "HEAD"],
                 capture_output=True, text=True, check=False,
-                cwd=REPO_ROOT,
+                cwd=_repo_root(),
             ).stdout.strip()
             try:
                 git_utils.merge_branch(
@@ -545,7 +551,7 @@ def _phase_test_and_merge(state: IterationState) -> None:
                 fs.merge_sha = subprocess.run(
                     ["git", "rev-parse", "HEAD"],
                     capture_output=True, text=True, check=False,
-                    cwd=REPO_ROOT,
+                    cwd=_repo_root(),
                 ).stdout.strip()
                 print(f"    Merged: {finding.branch_name}")
 
@@ -561,7 +567,7 @@ def _phase_test_and_merge(state: IterationState) -> None:
                     subprocess.run(
                         ["git", "reset", "--hard", pre_merge_sha],
                         capture_output=True, check=False,
-                        cwd=REPO_ROOT,
+                        cwd=_repo_root(),
                     )
                     # Merged then immediately undone — a 'reverted' outcome.
                     finding.status = "reverted"
@@ -770,7 +776,21 @@ def main():
                         help="Maximum number of audit/fix cycles (default: 10)")
     parser.add_argument("--single-iteration", action="store_true",
                         help="Run exactly one iteration (shorthand for --max-iterations 1)")
+    parser.add_argument("--repos", type=str, default=None,
+                        help="Path to a repos.yaml manifest; sweep multiple repos "
+                             "instead of the current directory")
     args = parser.parse_args()
+
+    # Multi-repo sweep: delegate to the dedicated runner so each repo gets its
+    # own config, log, and outcome store (see averyloop/multi.py).
+    if args.repos:
+        from averyloop import multi
+        raise SystemExit(multi.main(
+            ["--repos", args.repos]
+            + (["--dry-run"] if args.dry_run else [])
+            + (["--max-iterations", str(args.max_iterations)]
+               if not args.single_iteration else ["--max-iterations", "1"])
+        ))
 
     max_iter = 1 if args.single_iteration else args.max_iterations
     run_loop(max_iterations=max_iter, dry_run=args.dry_run)

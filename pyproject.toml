@@ -21,6 +21,7 @@ test = ["pytest>=7.0"]
 
 [project.scripts]
 averyloop = "averyloop.orchestrator_v2:main"
+averyloop-multi = "averyloop.multi:main"
 
 [tool.pytest.ini_options]
 # Only collect the real suite. The benchmark fixtures under

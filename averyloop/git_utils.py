@@ -15,14 +15,28 @@ from averyloop.project_config import get_project_config
 
 # Repository root — the current working directory (the target project).
 # Previously __file__-relative, which broke when installed as a pip package.
+# The multi-repo runner rebinds this per repo via ``set_repo_root`` so git
+# operations target the right repository instead of the ambient process cwd.
 REPO_ROOT = pathlib.Path.cwd()
 
 logger = logging.getLogger(__name__)
 
 
+def set_repo_root(path) -> None:
+    """Rebind the git repository root (used by the multi-repo runner)."""
+    global REPO_ROOT
+    REPO_ROOT = pathlib.Path(path)
+
+
 def _run(args: List[str], *, check: bool = True) -> subprocess.CompletedProcess:
-    """Run a git (or other) command, optionally raising on failure."""
-    result = subprocess.run(args, check=False, capture_output=True, text=True)
+    """Run a git (or other) command, optionally raising on failure.
+
+    Runs in ``REPO_ROOT`` so git acts on the bound repository rather than the
+    process cwd — required for clean multi-repo isolation.
+    """
+    result = subprocess.run(
+        args, check=False, capture_output=True, text=True, cwd=str(REPO_ROOT)
+    )
     if check and result.returncode != 0:
         raise RuntimeError(
             f"Command {args!r} failed (exit {result.returncode}):\n{result.stderr}"
