@@ -26,6 +26,24 @@ full results table and methodology.
 
 ## How it works
 
+At a glance, the loop is a pipeline: RAG-retrieved context feeds the auditor,
+each finding flows through implement → review → safety → test gates, and the
+result is scored and logged — then the convergence detector either loops back
+for another iteration or stops.
+
+```mermaid
+flowchart LR
+    RAG([RAG context]) --> Audit[Audit]
+    Audit --> Implement[Implement]
+    Implement --> Review[Review]
+    Review --> Safety[Safety gate]
+    Safety --> Test[Test &amp; merge]
+    Test --> Log[Log &amp; evaluate]
+    Log --> Converged{Converged?}
+    Converged -->|no| Audit
+    Converged -->|yes| Stop([Stop])
+```
+
 Each iteration runs five phases. RAG retrieval feeds the audit; every finding is
 implemented on its own branch and must clear a reviewer gate, a **deterministic
 safety gate**, and a pre/post-merge test gate before it lands. After each
