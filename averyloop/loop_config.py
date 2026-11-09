@@ -1,16 +1,62 @@
 """Configuration for the improvement loop.
 
-Loads from ``averyloop_config.json`` at the repo root.  Every field
-has a built-in default so the file is optional — missing keys are filled in
-automatically (same pattern as ``parse_config.m`` for the MATLAB pipeline).
+Loads from ``averyloop_config.json`` at the repo root and environment variables
+(or ``.env`` file).  Every field has a built-in default so the config file is
+optional — missing keys are filled in automatically.
 """
 
 import json
 import os
 from dataclasses import dataclass, field, fields
-from typing import List, Literal
+from pathlib import Path
+from typing import Dict, List, Literal, Optional
 
 CONFIG_PATH = os.path.join(os.getcwd(), "averyloop_config.json")
+
+SUPPORTED_ENV_KEYS = (
+    "GEMINI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "GITHUB_TOKEN",
+)
+
+
+def load_dotenv_file(dotenv_path: Optional[str | Path] = None, override: bool = False) -> Dict[str, str]:
+    """Load key=value pairs from a ``.env`` file into ``os.environ``.
+
+    Lightweight, dependency-free parser that supports comments, blank lines,
+    optional ``export `` prefixes, and single/double-quoted values.
+    """
+    path = Path(dotenv_path) if dotenv_path else Path.cwd() / ".env"
+    loaded: Dict[str, str] = {}
+    if not path.is_file():
+        return loaded
+
+    try:
+        content = path.read_text(encoding="utf-8")
+    except OSError:
+        return loaded
+
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        if "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip()
+        if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
+            val = val[1:-1]
+        elif "#" in val:
+            val = val.split("#", 1)[0].strip()
+        if key:
+            loaded[key] = val
+            if override or key not in os.environ:
+                os.environ[key] = val
+    return loaded
 
 
 @dataclass
@@ -83,9 +129,15 @@ class LoopConfig:
     safety_denylist_paths: List[str] = field(default_factory=list)
     safety_allowlist_paths: List[str] = field(default_factory=list)
 
-    # ── API ──────────────────────────────────────────────────────────────
-    # If empty, falls back to ANTHROPIC_API_KEY env var (Anthropic SDK default).
+    # ── API & Provider Credentials ───────────────────────────────────────
+    # Provider-agnostic credentials: loaded from config JSON, project YAML,
+    # or environment variables (GEMINI_API_KEY, ANTHROPIC_API_KEY,
+    # OPENAI_API_KEY, GITHUB_TOKEN).
+    provider: str = "auto"               # "anthropic", "gemini", "openai", or "auto"
     anthropic_api_key: str = ""
+    gemini_api_key: str = ""
+    openai_api_key: str = ""
+    github_token: str = ""
     audit_model: str = "claude-opus-4-6"
     fix_model: str = "claude-opus-4-6"
     judge_model: str = "claude-opus-4-6"
@@ -101,9 +153,28 @@ class LoopConfig:
     max_self_heal_attempts: int = 2
     max_file_chars: int = 8000
 
+    # ── Git sandboxing ───────────────────────────────────────────────────
+    use_worktree_sandbox: bool = False   # isolate branch edits in a temporary git worktree
 
-def load_loop_config(path: str | None = None) -> LoopConfig:
-    """Load config from JSON, falling back to defaults for missing keys."""
+    def active_provider(self) -> str:
+        """Resolve the active LLM provider from explicit config or available keys."""
+        if self.provider and self.provider != "auto":
+            return self.provider.lower()
+        if self.anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY"):
+            return "anthropic"
+        if self.gemini_api_key or os.environ.get("GEMINI_API_KEY"):
+            return "gemini"
+        if self.openai_api_key or os.environ.get("OPENAI_API_KEY"):
+            return "openai"
+        return "anthropic"
+
+
+def load_loop_config(
+    path: str | None = None,
+    dotenv_path: str | Path | None = None,
+) -> LoopConfig:
+    """Load config from JSON and environment/.env, falling back to defaults."""
+    dotenv_vals = load_dotenv_file(dotenv_path)
     cfg_path = path or CONFIG_PATH
     overrides: dict = {}
     if os.path.exists(cfg_path):
@@ -112,6 +183,23 @@ def load_loop_config(path: str | None = None) -> LoopConfig:
 
     valid_keys = {fld.name for fld in fields(LoopConfig)}
     filtered = {k: v for k, v in overrides.items() if k in valid_keys}
+
+    # Populate provider API keys & GitHub token from environment or .env when not set in JSON
+    env_mapping = {
+        "anthropic_api_key": "ANTHROPIC_API_KEY",
+        "gemini_api_key": "GEMINI_API_KEY",
+        "openai_api_key": "OPENAI_API_KEY",
+        "github_token": "GITHUB_TOKEN",
+    }
+    for field_name, env_var in env_mapping.items():
+        val = os.environ.get(env_var) or dotenv_vals.get(env_var)
+        if not filtered.get(field_name) and val:
+            filtered[field_name] = val
+
+    prov = os.environ.get("AVERYLOOP_PROVIDER") or dotenv_vals.get("AVERYLOOP_PROVIDER")
+    if not filtered.get("provider") and prov:
+        filtered["provider"] = prov
+
     return LoopConfig(**filtered)
 
 

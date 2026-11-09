@@ -278,6 +278,12 @@ def get_staged_files() -> list[str]:
     return lines.splitlines() if lines else []
 
 
+def get_head_sha(ref: str = "HEAD") -> str:
+    """Return the commit SHA for *ref* in the active repository."""
+    result = _run(["git", "rev-parse", ref], check=False)
+    return result.stdout.strip()
+
+
 def commit_all(message: str) -> None:
     """Stage all modified/new tracked files and commit with *message*.
 
@@ -288,3 +294,39 @@ def commit_all(message: str) -> None:
     if not status.stdout.strip():
         return  # nothing to commit
     _run(["git", "commit", "-m", message])
+
+
+# ---------------------------------------------------------------------------
+# Isolated git worktree / branch sandboxing
+# ---------------------------------------------------------------------------
+
+from contextlib import contextmanager
+import tempfile
+
+
+@contextmanager
+def worktree_sandbox(branch_name: str, base: str | None = None):
+    """Create an isolated temporary git worktree for *branch_name* off *base*.
+
+    Ensures the user's primary working tree and ``main`` branch are never
+    dirtied while implementing or testing a candidate patch.  Cleans up the
+    temporary worktree directory on exit while preserving the branch ref in
+    the repository so approved + tested commits can be merged cleanly.
+    """
+    if base is None:
+        base = _default_branch()
+
+    tmp_dir = tempfile.mkdtemp(prefix="averyloop-wt-")
+    prev_root = REPO_ROOT
+    try:
+        if branch_exists(branch_name):
+            _run(["git", "worktree", "add", tmp_dir, branch_name])
+        else:
+            _run(["git", "worktree", "add", "-b", branch_name, tmp_dir, base])
+        set_repo_root(tmp_dir)
+        yield pathlib.Path(tmp_dir)
+    finally:
+        set_repo_root(prev_root)
+        _run(["git", "worktree", "remove", "--force", tmp_dir], check=False)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+

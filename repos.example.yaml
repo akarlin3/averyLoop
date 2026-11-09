@@ -13,10 +13,10 @@ defaults:
 
 repos:
   # Full form: per-repo overrides.
-  - path: ../prismtask                  # absolute, or relative to this manifest
-    name: prismtask                     # optional label (defaults to basename)
+  - path: ./target-repo-a               # absolute, or relative to this manifest
+    name: target-repo-a                 # optional label (defaults to basename)
     config: averyloop_config.json       # optional loop-config path (relative to repo)
     max_iterations: 5                   # optional per-repo iteration cap
 
   # Shorthand: a bare path string uses the defaults above.
-  - ../annealmusic
+  - ./target-repo-b

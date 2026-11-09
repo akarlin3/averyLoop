@@ -23,8 +23,12 @@ read_only_dirs: []                     # Dirs the loop may read but must not mod
 skip_dirs: [".git", "__pycache__"]     # Dirs to skip when indexing / scanning
 key_files: []                          # Important files the auditor should always review
 
-# --- API ---
-anthropic_api_key:                   # If empty, falls back to loop config
+# --- API & Providers ---
+provider: "auto"                     # "auto", "anthropic", "gemini", or "openai"
+anthropic_api_key:                   # If empty, falls back to .env / ANTHROPIC_API_KEY
+gemini_api_key:                      # If empty, falls back to .env / GEMINI_API_KEY
+openai_api_key:                      # If empty, falls back to .env / OPENAI_API_KEY
+github_token:                        # If empty, falls back to .env / GITHUB_TOKEN
 audit_model: "claude-opus-4-6"       # If empty, falls back to loop config default
 fix_model: "claude-opus-4-6"         # If empty, falls back to loop config default
 judge_model: "claude-opus-4-6"       # If empty, falls back to loop config default

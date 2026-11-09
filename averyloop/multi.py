@@ -33,11 +33,11 @@ The manifest format::
       max_iterations: 10
       dry_run: false
     repos:
-      - path: ../prismtask           # required (abs, or relative to the manifest)
-        name: prismtask              # optional (defaults to the basename)
+      - path: ./target-repo-a        # required (abs, or relative to the manifest)
+        name: target-repo-a          # optional (defaults to the basename)
         config: averyloop_config.json  # optional loop-config path (rel to repo)
         max_iterations: 5            # optional per-repo override
-      - ../annealmusic               # shorthand: a bare path string
+      - ./target-repo-b              # shorthand: a bare path string
 """
 
 from __future__ import annotations

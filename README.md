@@ -1,8 +1,8 @@
 # AveryLoop
 
-[![tests](https://github.com/akarlin3/averyLoop/actions/workflows/test.yml/badge.svg)](https://github.com/akarlin3/averyLoop/actions/workflows/test.yml)
+[![CI](https://github.com/akarlin3/averyLoop/actions/workflows/ci.yml/badge.svg)](https://github.com/akarlin3/averyLoop/actions/workflows/ci.yml)
 
-An autonomous code audit → implement → review → merge pipeline powered by Claude. Uses specialized LLM agents (auditor, implementer, reviewer) with RAG-based codebase retrieval to continuously improve any code repository.
+An autonomous code audit → implement → review → gated merge CLI pipeline powered by LLMs (Anthropic Claude, Google Gemini, OpenAI). Uses specialized agents (auditor, implementer, reviewer) with RAG-based codebase retrieval and deterministic safety gates to continuously improve any Git repository.
 
 **Measured, not just clever.** AveryLoop *learns within a project* — it records
 whether each past fix was accepted, vetoed, or reverted and recalls that history
@@ -14,12 +14,14 @@ full results table and methodology.
 
 ## Features
 
+- **Zero-config installable CLI**: `pip install .` then `averyloop run --repo ./target-repo --dry-run`
+- **Provider-agnostic configuration**: Supports `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and `GITHUB_TOKEN` via `.env` or environment variables
 - **Four-agent pipeline**: audit, implement, review, merge — each with configurable system prompts
 - **LLM-as-judge evaluation** with calibration examples and multi-dimensional scoring (specificity, accuracy, coverage, prioritization, domain appropriateness)
 - **RAG context retrieval** via ChromaDB — semantic code search with language-aware chunking (Python, MATLAB)
-- **Automatic diminishing returns detection** — stops the loop when merge rates drop, importance stalls, and the same files keep surfacing
-- **Safety flags** for domain-specific risks (e.g. `LEAKAGE_RISK`, `PHI_RISK`) — configurable per project with critical flags that block automatic merge
-- **Git branch isolation** per fix with post-merge test validation — each improvement gets its own branch, tests run before and after merge
+- **Automatic diminishing returns & convergence detection** — stops the loop when merge rates drop, importance stalls, and the same files keep surfacing
+- **Safety flags & deterministic safety gate** — code-level non-LLM merge vetoes plus configurable critical flags (`LEAKAGE_RISK`, `PHI_RISK`) that block automatic merge
+- **Sandboxed Git branch & worktree isolation** per fix with pre/post-merge test validation — never mutates a user's `main` branch without passing checks
 - **Outcome-feedback RAG** — records every fix outcome (accepted / vetoed / reverted) in a persistent, rebuild-surviving ChromaDB store and recalls it as *additive* audit context ("2 prior fixes to similar code accepted, 1 reverted"), so the loop stops repeating known-bad changes
 - **Benchmark harness** — runs AveryLoop against seeded-bug fixtures and reports fix rate, false-accept rate, convergence savings, and judge↔objective agreement, with convergence-on-vs-off and memory-on-vs-off comparisons
 - **Full iteration logging** with score drift detection, finding deduplication, and structured JSON history
@@ -95,49 +97,60 @@ flowchart TD
 
 ## Installation
 
-From source (editable):
-
 ```bash
 git clone https://github.com/akarlin3/averyLoop.git
-cd averyloop
-pip install -e ".[test]"
+cd averyLoop
+pip install .
 ```
 
-From PyPI (when published):
+For development and running the test suite:
 
 ```bash
-pip install averyloop
+pip install -e ".[test]"
 ```
 
 ### Requirements
 
 - Python >= 3.10
-- An [Anthropic API key](https://console.anthropic.com/)
-- Git (the loop creates branches and merges)
+- An API key for Anthropic (`ANTHROPIC_API_KEY`), Google Gemini (`GEMINI_API_KEY`), or OpenAI (`OPENAI_API_KEY`) — not required for `--dry-run`
+- Git (the loop isolates each candidate fix on its own branch/worktree and merges only after passing checks)
 
-## Quick Start
+## Quick Start & CLI Flags
 
 ```bash
-# 1. Copy the example config
-cp project_config.example.yaml project_config.yaml
+# 1. Configure your environment (optional for --dry-run)
+cp .env.example .env
+# Edit .env to set GEMINI_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, or GITHUB_TOKEN
 
-# 2. Edit it with your repo's source directories, test command, and prompts
-#    (see Configuration below)
+# 2. Zero-config dry run against any target Git repository (no API calls, no code mutations)
+averyloop run --repo ./target-repo --dry-run
 
-# 3. Set your API key in project_config.yaml (anthropic_api_key field)
+# 3. Run a single live iteration against a target repository
+averyloop run --repo ./target-repo --single-iteration
 
-# 4. Run a single iteration to test
-averyloop --single-iteration
+# 4. Run the full autonomous loop (up to 10 iterations by default)
+averyloop run --repo ./target-repo --max-iterations 10
 
-# 5. Run the full loop (up to 10 iterations by default)
-averyloop
+# 5. View iteration history summary for a repository
+averyloop summary --repo ./target-repo
 
-# 6. Dry run (no API calls, no code changes — validates setup)
-averyloop --dry-run
-
-# 7. Sweep multiple repos in one invocation (see Multi-repo below)
-averyloop --repos repos.yaml
+# 6. Sweep multiple repositories sequentially from a manifest
+averyloop run --repos repos.yaml --dry-run
 ```
+
+### CLI Reference (`averyloop --help`)
+
+| Flag / Argument | Default | Description |
+|---|---|---|
+| `command` | `run` | Subcommand to execute: `run`, `summary`, or `benchmark` |
+| `--repo <path>` | `.` | Path to the target Git repository |
+| `--dry-run` | `false` | Execute in strict dry-run mode without API calls or branch/file mutations |
+| `--max-iterations <N>` | `10` | Maximum number of audit/implement/review/merge iterations |
+| `--single-iteration` | `false` | Run exactly one iteration (shorthand for `--max-iterations 1`) |
+| `--repos <manifest>` | `None` | Path to a `repos.yaml` manifest to sweep multiple repositories sequentially |
+| `--config <path>` | `None` | Optional path to `averyloop_config.json` |
+| `--env-file <path>` | `None` | Optional path to a `.env` file containing provider API keys |
+| `--version` | — | Print the installed `averyloop` version and exit |
 
 While a run executes, AveryLoop shows a **live dashboard** (current repo,
 iteration, phase, latest LLM + composite scores, convergence status, and the
@@ -157,11 +170,11 @@ defaults:
   max_iterations: 10
   dry_run: false
 repos:
-  - path: ../prismtask                # absolute, or relative to the manifest
-    name: prismtask                   # optional label (defaults to the basename)
-    config: averyloop_config.json     # optional loop-config path (relative to repo)
-    max_iterations: 5                 # optional per-repo cap
-  - ../annealmusic                    # shorthand: a bare path uses the defaults
+  - path: ./target-repo-a               # absolute, or relative to the manifest
+    name: target-repo-a                 # optional label (defaults to the basename)
+    config: averyloop_config.json       # optional loop-config path (relative to repo)
+    max_iterations: 5                   # optional per-repo cap
+  - ./target-repo-b                     # shorthand: a bare path uses the defaults
 ```
 
 ```bash

@@ -433,7 +433,7 @@ def _phase_review(state: IterationState) -> None:
                     git_utils.checkout(state.original_branch)
                     subprocess.run(
                         ["git", "branch", "-D", finding.branch_name],
-                        check=False, capture_output=True,
+                        check=False, capture_output=True, cwd=_repo_root(),
                     )
                 except Exception:
                     pass
@@ -496,13 +496,13 @@ def _phase_test_and_merge(state: IterationState) -> None:
             print(f"    Rebasing {finding.branch_name} onto {state.original_branch}...")
             rebase_result = subprocess.run(
                 ["git", "rebase", state.original_branch],
-                capture_output=True, text=True, check=False,
+                capture_output=True, text=True, check=False, cwd=_repo_root(),
             )
             if rebase_result.returncode != 0:
                 print(f"    Rebase conflict — aborting rebase, skipping merge")
                 subprocess.run(
                     ["git", "rebase", "--abort"],
-                    capture_output=True, check=False,
+                    capture_output=True, check=False, cwd=_repo_root(),
                 )
                 finding.status = "implemented"
                 state.all_tests_passed = False
@@ -782,9 +782,11 @@ def _print_run_summary(entries: list) -> None:
     print(f"{'='*60}\n")
 
 
-def main():
+def main(argv: Optional[List[str]] = None) -> int:
     """CLI entry point."""
     parser = argparse.ArgumentParser(description="Improvement loop orchestrator v2")
+    parser.add_argument("--repo", type=str, default=".",
+                        help="Path to the target Git repository (default: current directory)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Run without API calls or code changes")
     parser.add_argument("--max-iterations", type=int, default=10,
@@ -794,7 +796,7 @@ def main():
     parser.add_argument("--repos", type=str, default=None,
                         help="Path to a repos.yaml manifest; sweep multiple repos "
                              "instead of the current directory")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     # Multi-repo sweep: delegate to the dedicated runner so each repo gets its
     # own config, log, and outcome store (see averyloop/multi.py).
@@ -808,8 +810,15 @@ def main():
         ))
 
     max_iter = 1 if args.single_iteration else args.max_iterations
-    run_loop(max_iterations=max_iter, dry_run=args.dry_run)
+    target_repo = os.path.abspath(args.repo)
+    if target_repo != os.path.abspath("."):
+        from averyloop.multi import repo_session
+        with repo_session(target_repo):
+            run_loop(max_iterations=max_iter, dry_run=args.dry_run)
+    else:
+        run_loop(max_iterations=max_iter, dry_run=args.dry_run)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -11,7 +11,11 @@
     "dr_min_file_repeats": 3,
     "dr_max_audit_score": 8.5,
 
+    "provider": "auto",
     "anthropic_api_key": "",
+    "gemini_api_key": "",
+    "openai_api_key": "",
+    "github_token": "",
 
     "audit_model": "claude-opus-4-6",
     "fix_model": "claude-opus-4-6",
@@ -24,5 +28,6 @@
     "max_api_retries": 3,
     "retry_base_delay": 30.0,
     "max_self_heal_attempts": 2,
-    "max_file_chars": 8000
+    "max_file_chars": 8000,
+    "use_worktree_sandbox": false
 }

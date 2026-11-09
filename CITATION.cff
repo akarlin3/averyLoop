@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+title: "AveryLoop: Autonomous Code Auditing and Improvement Framework"
+message: "If you use AveryLoop in your research or software projects, please cite it using the metadata from this file."
+type: software
+authors:
+  - alias: akarlin3
+    name: "Avery Karlin"
+repository-code: "https://github.com/akarlin3/averyLoop"
+url: "https://github.com/akarlin3/averyLoop"
+license: AGPL-3.0-only
+version: 1.0.0
+date-released: "2026-11-09"
+keywords:
+  - autonomous-agents
+  - code-auditing
+  - llm-as-a-judge
+  - retrieval-augmented-generation
+  - software-engineering
+  - cli

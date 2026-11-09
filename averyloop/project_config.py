@@ -42,7 +42,11 @@ class ProjectConfig:
         default_factory=lambda: ["LEAKAGE_RISK", "PHI_RISK"]
     )
     forbidden_patterns: List[str] = field(default_factory=list)
-    anthropic_api_key: str = ""  # If empty, falls back to loop config
+    provider: str = ""  # "anthropic", "gemini", "openai", or "" (falls back to loop config)
+    anthropic_api_key: str = ""  # If empty, falls back to loop config / env
+    gemini_api_key: str = ""  # If empty, falls back to loop config / env
+    openai_api_key: str = ""  # If empty, falls back to loop config / env
+    github_token: str = ""  # If empty, falls back to loop config / env
     audit_model: str = ""  # If empty, falls back to loop config default
     fix_model: str = ""  # If empty, falls back to loop config default
     judge_model: str = ""  # If empty, falls back to loop config default
@@ -103,7 +107,7 @@ def load_project_config(path: Optional[str] = None) -> ProjectConfig:
 
     # Only pass keys that are valid ProjectConfig fields
     valid_fields = {f.name for f in ProjectConfig.__dataclass_fields__.values()}
-    filtered = {k: v for k, v in raw.items() if k in valid_fields}
+    filtered = {k: v for k, v in raw.items() if k in valid_fields and v is not None}
 
     return ProjectConfig(**filtered)
 
